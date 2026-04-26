@@ -39,6 +39,20 @@ describe("createTelegramUIContext", () => {
       .rejects.toThrow("TelePi does not yet support extension UI method 'input'.");
   });
 
+  it("exposes setWorkingIndicator as a no-op for compatibility", () => {
+    const ui = createTelegramUIContext({ notify: vi.fn() });
+
+    expect(() => ui.setWorkingIndicator({ frames: ["●"], intervalMs: 250 })).not.toThrow();
+    expect(() => ui.setWorkingIndicator()).not.toThrow();
+  });
+
+  it("exposes addAutocompleteProvider as a no-op for compatibility", () => {
+    const ui = createTelegramUIContext({ notify: vi.fn() });
+    const provider = vi.fn((current) => current);
+
+    expect(() => ui.addAutocompleteProvider(provider)).not.toThrow();
+  });
+
   it("exposes setHiddenThinkingLabel as a no-op for compatibility", () => {
     const ui = createTelegramUIContext({ notify: vi.fn() });
 

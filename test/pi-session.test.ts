@@ -457,6 +457,22 @@ describe("PiSessionService", () => {
     });
   });
 
+  it("passes built-in tool names to createAgentSessionFromServices on pi 0.70.x", async () => {
+    mockState.createCodingTools.mockReturnValueOnce([
+      { name: "read", description: "Read files" },
+      { name: "bash", description: "Execute bash" },
+      { name: "write", description: "Write files" },
+    ]);
+
+    await PiSessionService.create(createConfig());
+
+    expect(mockState.createAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: ["read", "bash", "write"],
+      }),
+    );
+  });
+
   it("collects runtime diagnostics for Telegram-visible session info", async () => {
     mockState.SettingsManager.create.mockImplementationOnce(() => ({
       getEnabledModels: vi.fn().mockReturnValue(undefined),
@@ -768,7 +784,10 @@ describe("PiSessionService", () => {
 
     const info = await service.switchSession("/sessions/saved.jsonl", "/workspace/projectA");
 
-    expect(runtime.switchSession).toHaveBeenCalledWith("/sessions/saved.jsonl", "/workspace/projectA");
+    expect(runtime.switchSession).toHaveBeenCalledWith(
+      "/sessions/saved.jsonl",
+      { cwdOverride: "/workspace/projectA" },
+    );
     expect(mockState.SessionManager.open).toHaveBeenLastCalledWith(
       "/sessions/saved.jsonl",
       undefined,
@@ -799,7 +818,7 @@ describe("PiSessionService", () => {
 
       const info = await service.switchSession(sessionPath);
 
-      expect(runtime.switchSession).toHaveBeenCalledWith(sessionPath, targetWorkspace);
+      expect(runtime.switchSession).toHaveBeenCalledWith(sessionPath, { cwdOverride: targetWorkspace });
       expect(service.getCurrentWorkspace()).toBe(targetWorkspace);
       expect(info.workspace).toBe(targetWorkspace);
     } finally {
@@ -829,7 +848,7 @@ describe("PiSessionService", () => {
 
       const info = await service.switchSession(tildePath);
 
-      expect(runtime.switchSession).toHaveBeenCalledWith(sessionPath, tempDir);
+      expect(runtime.switchSession).toHaveBeenCalledWith(sessionPath, { cwdOverride: tempDir });
       expect(mockState.SessionManager.open).toHaveBeenLastCalledWith(sessionPath, undefined, tempDir);
       expect(info.sessionFile).toBe(sessionPath);
       expect(info.workspace).toBe(tempDir);
@@ -861,7 +880,7 @@ describe("PiSessionService", () => {
 
       const info = await service.switchSession(rawSessionPath);
 
-      expect(runtime.switchSession).toHaveBeenCalledWith(resolvedSessionPath, tempDir);
+      expect(runtime.switchSession).toHaveBeenCalledWith(resolvedSessionPath, { cwdOverride: tempDir });
       expect(mockState.SessionManager.open).toHaveBeenLastCalledWith(resolvedSessionPath, undefined, tempDir);
       expect(info.sessionFile).toBe(resolvedSessionPath);
       expect(info.workspace).toBe(tempDir);
