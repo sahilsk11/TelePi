@@ -100,11 +100,11 @@ export interface PiSessionNewSessionOptions extends RuntimeNewSessionOptions {
   workspace?: string;
 }
 
-export interface PiSessionSwitchOptions extends RuntimeSwitchSessionOptions {
+export type PiSessionSwitchOptions = Pick<RuntimeSwitchSessionOptions, "withSession"> & {
   workspace?: string;
-}
+};
 
-export interface PiSessionForkOptions extends RuntimeForkOptions {}
+export type PiSessionForkOptions = RuntimeForkOptions;
 
 class SessionReferenceResolutionError extends Error {
   readonly code = "SESSION_REFERENCE_RESOLUTION_ERROR";
@@ -795,9 +795,7 @@ export class PiSessionService {
   async fork(entryId: string, options?: PiSessionForkOptions): Promise<{ cancelled: boolean }> {
     const previousSession = this.getSession();
     const previousWorkspace = this.currentWorkspace;
-    const result = options
-      ? await this.getHandle().runtime.fork(entryId, options)
-      : await this.getHandle().runtime.fork(entryId);
+    const result = await this.getHandle().runtime.fork(entryId, options);
     await this.rebindAfterRuntimeSessionReplacement(previousSession, previousWorkspace);
     return { cancelled: result.cancelled };
   }

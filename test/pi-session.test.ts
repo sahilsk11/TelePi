@@ -728,6 +728,19 @@ describe("PiSessionService", () => {
     expect(service.getCurrentWorkspace()).toBe("/workspace/other");
   });
 
+  it("throws when withSession is requested for a cross-workspace new session", async () => {
+    const service = await PiSessionService.create(createConfig());
+    const withSession = vi.fn().mockResolvedValue(undefined);
+
+    await expect(service.newSession({ workspace: "/workspace/other", withSession })).rejects.toThrow(
+      "TelePi only supports withSession callbacks for runtime-backed new-session replacements.",
+    );
+
+    expect(mockState.createAgentSession).toHaveBeenCalledTimes(1);
+    expect(withSession).not.toHaveBeenCalled();
+    expect(service.getCurrentWorkspace()).toBe("/workspace/base");
+  });
+
   it("clears the active handle when extension rebinding fails during replacement", async () => {
     const service = await PiSessionService.create(createConfig());
     const previousSession = mockState.createdSessions[0]?.session;
@@ -984,6 +997,22 @@ describe("PiSessionService", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("throws when withSession is requested for a switch without an active handle", async () => {
+    const service = await PiSessionService.create(createConfig());
+    const withSession = vi.fn().mockResolvedValue(undefined);
+
+    await service.handback();
+    expect(service.hasActiveSession()).toBe(false);
+
+    await expect(service.switchSession("/sessions/saved.jsonl", { withSession })).rejects.toThrow(
+      "TelePi only supports withSession callbacks for runtime-backed session switches.",
+    );
+
+    expect(mockState.SessionManager.open).not.toHaveBeenCalled();
+    expect(mockState.createAgentSession).toHaveBeenCalledTimes(1);
+    expect(withSession).not.toHaveBeenCalled();
   });
 
   it("recreates the model registry each time the runtime factory creates a same-runtime replacement session", async () => {
@@ -1815,7 +1844,7 @@ describe("PiSessionService", () => {
     expect(currentSession.navigateTree).toHaveBeenCalledWith("known-id", { summarize: true });
 
     await expect(service.fork("known-id")).resolves.toEqual({ cancelled: false });
-    expect(mockState.createdRuntimes[0]?.runtime.fork).toHaveBeenCalledWith("known-id");
+    expect(mockState.createdRuntimes[0]?.runtime.fork).toHaveBeenCalledWith("known-id", undefined);
 
     const forkedSession = mockState.createdSessions[1]?.session;
     forkedSession.sessionManager.getTree.mockReturnValue(currentSession.sessionManager.getTree());
