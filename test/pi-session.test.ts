@@ -21,6 +21,8 @@ const mockState = vi.hoisted(() => {
   const sessionSubscribers = new WeakMap<object, (event: any) => void>();
   const sessionPathWorkspaces = new Map<string, string>();
   const resolvedSessionPaths = new Map<string, string>();
+  const defaultActiveBuiltInToolNames = ["read", "bash", "edit", "write"];
+  const extensionToolName = "extension-tool";
   let slashCommands = [
     { name: "deploy", description: "Deploy app", source: "extension", path: "/ext/deploy.ts" },
     { name: "review", description: "Review staged changes", source: "prompt", path: "/prompts/review.md" },
@@ -92,6 +94,12 @@ const mockState = vi.hoisted(() => {
     const sessionManager = options.sessionManager as any ?? createSessionManagerInstance(
       (options.cwd as string | undefined) ?? "/workspace/base",
     );
+    let activeToolNames = [
+      ...((options.activeToolNames as string[] | undefined) ?? [
+        ...defaultActiveBuiltInToolNames,
+        extensionToolName,
+      ]),
+    ];
 
     const session: any = {
       sessionId: options.sessionId ?? `session-${sessionCounter}`,
@@ -117,6 +125,10 @@ const mockState = vi.hoisted(() => {
       abort: vi.fn().mockResolvedValue(undefined),
       reload: vi.fn().mockResolvedValue(undefined),
       navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+      getActiveToolNames: vi.fn().mockImplementation(() => [...activeToolNames]),
+      setActiveToolsByName: vi.fn().mockImplementation((toolNames: string[]) => {
+        activeToolNames = [...toolNames];
+      }),
       extensionRunner: {
         getCommands: vi.fn().mockImplementation(() => slashCommands),
         hasHandlers: vi.fn().mockReturnValue(false),
@@ -160,22 +172,33 @@ const mockState = vi.hoisted(() => {
     return session;
   };
 
-  const createAgentSession = vi.fn().mockImplementation(async (options: any) => ({
-    session: createSession({
-      cwd: options.services.cwd,
-      model: options.model,
-      thinkingLevel: options.thinkingLevel,
-      scopedModels: options.scopedModels,
-      sessionManager: options.sessionManager,
-      sessionFile: options.sessionManager?.getSessionFile?.(),
-    }),
-    extensionsResult: {
-      runtime: {
-        getCommands: vi.fn().mockImplementation(() => slashCommands),
+  const createAgentSession = vi.fn().mockImplementation(async (options: any) => {
+    const activeToolNames = options.tools
+      ? [...options.tools]
+      : options.noTools === "all"
+        ? []
+        : options.noTools === "builtin"
+          ? [extensionToolName]
+          : [...defaultActiveBuiltInToolNames, extensionToolName];
+
+    return {
+      session: createSession({
+        cwd: options.services.cwd,
+        model: options.model,
+        thinkingLevel: options.thinkingLevel,
+        scopedModels: options.scopedModels,
+        sessionManager: options.sessionManager,
+        sessionFile: options.sessionManager?.getSessionFile?.(),
+        activeToolNames,
+      }),
+      extensionsResult: {
+        runtime: {
+          getCommands: vi.fn().mockImplementation(() => slashCommands),
+        },
       },
-    },
-    modelFallbackMessage: options.model ? undefined : "fallback-model",
-  }));
+      modelFallbackMessage: options.model ? undefined : "fallback-model",
+    };
+  });
 
   const createAgentSessionServices = vi.fn().mockImplementation(async (options: any) => ({
     cwd: options.cwd,
@@ -451,11 +474,11 @@ describe("PiSessionService", () => {
     expect(mockState.createAgentSession).toHaveBeenCalledWith(
       expect.objectContaining({
         services: expect.objectContaining({ cwd: "/workspace/base" }),
-        tools: expect.arrayContaining([expect.anything()]),
         model: undefined,
         scopedModels: [],
       }),
     );
+    expect(mockState.createAgentSession.mock.calls[0]?.[0]).not.toHaveProperty("tools");
 
     expect(service.getInfo()).toEqual({
       sessionId: "session-1",
@@ -467,19 +490,24 @@ describe("PiSessionService", () => {
     });
   });
 
-  it("passes built-in tool names to createAgentSessionFromServices on pi 0.70.x", async () => {
+  it("activates coding built-ins after session creation without disabling extension/custom tools on pi 0.70.x", async () => {
     mockState.createCodingTools.mockReturnValueOnce([
       { name: "read", description: "Read files" },
       { name: "bash", description: "Execute bash" },
       { name: "write", description: "Write files" },
+      { name: "find", description: "Find files" },
+      { name: "ls", description: "List files" },
     ]);
 
-    await PiSessionService.create(createConfig());
+    const service = await PiSessionService.create(createConfig());
+    const currentSession = mockState.createdSessions[0]?.session;
 
-    expect(mockState.createAgentSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tools: ["read", "bash", "write"],
-      }),
+    expect(mockState.createAgentSession.mock.calls[0]?.[0]).not.toHaveProperty("tools");
+    expect(currentSession.setActiveToolsByName).toHaveBeenCalledWith(
+      expect.arrayContaining(["read", "bash", "edit", "write", "find", "ls", "extension-tool"]),
+    );
+    expect(service.getSession().getActiveToolNames()).toEqual(
+      expect.arrayContaining(["read", "bash", "edit", "write", "find", "ls", "extension-tool"]),
     );
   });
 
@@ -941,7 +969,7 @@ describe("PiSessionService", () => {
     }
   });
 
-  it("recreates the model registry each time the runtime factory creates a session", async () => {
+  it("recreates the model registry each time the runtime factory creates a same-runtime replacement session", async () => {
     const service = await PiSessionService.create(createConfig());
     const firstRegistry = mockState.createAgentSessionServices.mock.calls[0]?.[0]?.modelRegistry;
 
@@ -952,6 +980,32 @@ describe("PiSessionService", () => {
     expect(firstRegistry).toBe(mockState.modelRegistryInstances[0]);
     expect(secondRegistry).toBe(mockState.modelRegistryInstances[1]);
     expect(secondRegistry).not.toBe(firstRegistry);
+  });
+
+  it("recreates the model registry and reapplies coding-tool activation for cross-runtime replacements", async () => {
+    mockState.createCodingTools.mockReturnValue([
+      { name: "read", description: "Read files" },
+      { name: "bash", description: "Execute bash" },
+      { name: "edit", description: "Edit files" },
+      { name: "write", description: "Write files" },
+      { name: "find", description: "Find files" },
+    ]);
+    const service = await PiSessionService.create(createConfig());
+    const firstRegistry = mockState.createAgentSessionServices.mock.calls[0]?.[0]?.modelRegistry;
+
+    await service.newSession("/workspace/other");
+
+    const secondRegistry = mockState.createAgentSessionServices.mock.calls[1]?.[0]?.modelRegistry;
+    const replacementSession = mockState.createdSessions[1]?.session;
+    expect(mockState.ModelRegistry.create).toHaveBeenCalledTimes(2);
+    expect(secondRegistry).toBe(mockState.modelRegistryInstances[1]);
+    expect(secondRegistry).not.toBe(firstRegistry);
+    expect(replacementSession.setActiveToolsByName).toHaveBeenCalledWith(
+      expect.arrayContaining(["read", "bash", "edit", "write", "find", "extension-tool"]),
+    );
+    expect(replacementSession.getActiveToolNames()).toEqual(
+      expect.arrayContaining(["read", "bash", "edit", "write", "find", "extension-tool"]),
+    );
   });
 
   it("returns the runtime cancellation signal when switching sessions is cancelled", async () => {

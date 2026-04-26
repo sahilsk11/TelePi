@@ -130,21 +130,63 @@ function patchBashTimeout(session: AgentSession): void {
     if (tool.name !== "bash") return tool;
 
     const originalExecute = tool.execute;
+    const execute: typeof originalExecute = (toolCallId, params, signal, onUpdate) =>
+      originalExecute(
+        toolCallId,
+        withDefaultBashTimeout(params),
+        signal,
+        onUpdate,
+      );
+
     return {
       ...tool,
       description:
         tool.description +
         ` Commands time out after ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds by default. Pass a longer timeout for slow commands (e.g. npm install, test suites).`,
-      execute: (toolCallId: string, args: { command: string; timeout?: number }, signal?: AbortSignal, onUpdate?: any) =>
-        originalExecute(
-          toolCallId,
-          { ...args, timeout: args.timeout ?? DEFAULT_BASH_TIMEOUT_SECONDS },
-          signal,
-          onUpdate,
-        ),
+      execute,
     };
   });
   session.agent.state.tools = patched;
+}
+
+function withDefaultBashTimeout<T>(params: T): T {
+  if (!isBashToolInput(params)) {
+    return params;
+  }
+
+  return {
+    ...params,
+    timeout: params.timeout ?? DEFAULT_BASH_TIMEOUT_SECONDS,
+  } as T;
+}
+
+function isBashToolInput(value: unknown): value is { command: string; timeout?: number } {
+  return typeof value === "object"
+    && value !== null
+    && "command" in value
+    && typeof value.command === "string"
+    && (!("timeout" in value) || value.timeout === undefined || typeof value.timeout === "number");
+}
+
+function getDesiredBuiltInToolNames(cwd: string): string[] {
+  return [...new Set(createCodingTools(cwd).map((tool) => tool.name))];
+}
+
+function ensureBuiltInToolActivation(session: AgentSession, builtInToolNames: string[]): void {
+  if (builtInToolNames.length === 0) {
+    return;
+  }
+
+  const currentActiveToolNames = session.getActiveToolNames();
+  const nextActiveToolNames = [...new Set([...currentActiveToolNames, ...builtInToolNames])];
+  const changed = nextActiveToolNames.length !== currentActiveToolNames.length
+    || nextActiveToolNames.some((toolName, index) => toolName !== currentActiveToolNames[index]);
+
+  if (!changed) {
+    return;
+  }
+
+  session.setActiveToolsByName(nextActiveToolNames);
 }
 
 export async function createPiSession(
@@ -223,6 +265,7 @@ async function createPiSessionHandle(
       hasExistingSession,
     });
 
+    const desiredBuiltInToolNames = getDesiredBuiltInToolNames(cwd);
     const result = await createAgentSessionFromServices({
       services,
       sessionManager: runtimeSessionManager,
@@ -230,8 +273,8 @@ async function createPiSessionHandle(
       model,
       thinkingLevel,
       scopedModels,
-      tools: createCodingTools(cwd),
     });
+    ensureBuiltInToolActivation(result.session, desiredBuiltInToolNames);
     getSlashCommands = () => result.extensionsResult.runtime.getCommands?.() ?? [];
     patchBashTimeout(result.session);
 
@@ -651,7 +694,9 @@ export class PiSessionService {
 
     const previousSession = this.getSession();
     const previousWorkspace = this.currentWorkspace;
-    const result = await this.getHandle().runtime.switchSession(runtimeSessionPath, effectiveWorkspace);
+    const result = await this.getHandle().runtime.switchSession(runtimeSessionPath, {
+      cwdOverride: effectiveWorkspace,
+    });
     await this.rebindAfterRuntimeSessionReplacement(previousSession, previousWorkspace);
     return {
       ...this.getInfo(),
