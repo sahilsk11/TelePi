@@ -451,7 +451,7 @@ describe("PiSessionService", () => {
     expect(mockState.createAgentSession).toHaveBeenCalledWith(
       expect.objectContaining({
         services: expect.objectContaining({ cwd: "/workspace/base" }),
-        tools: expect.any(Array),
+        tools: expect.arrayContaining([expect.anything()]),
         model: undefined,
         scopedModels: [],
       }),
