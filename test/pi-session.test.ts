@@ -696,10 +696,11 @@ describe("PiSessionService", () => {
     });
 
     const setup = vi.fn().mockResolvedValue(undefined);
-    const result = await service.newSession({ parentSession: "/tmp/parent.jsonl", setup });
+    const withSession = vi.fn().mockResolvedValue(undefined);
+    const result = await service.newSession({ parentSession: "/tmp/parent.jsonl", setup, withSession });
     const nextSession = mockState.createdSessions[1]?.session;
 
-    expect(runtime.newSession).toHaveBeenCalledWith({ parentSession: "/tmp/parent.jsonl", setup });
+    expect(runtime.newSession).toHaveBeenCalledWith({ parentSession: "/tmp/parent.jsonl", setup, withSession });
     expect(result.created).toBe(true);
     expect(setup).toHaveBeenCalledWith(nextSession.sessionManager);
     expect(nextSession.bindExtensions).toHaveBeenCalledWith(bindings);
@@ -834,6 +835,22 @@ describe("PiSessionService", () => {
     expect(previousSession.dispose).toHaveBeenCalledTimes(1);
     expect(info.workspace).toBe("/workspace/projectA");
     expect(info.sessionFile).toBe("/sessions/saved.jsonl");
+  });
+
+  it("forwards runtime switch-session options", async () => {
+    const service = await PiSessionService.create(createConfig());
+    const runtime = mockState.createdRuntimes[0]?.runtime;
+    const withSession = vi.fn().mockResolvedValue(undefined);
+
+    await service.switchSession("/sessions/saved.jsonl", {
+      workspace: "/workspace/projectA",
+      withSession,
+    });
+
+    expect(runtime.switchSession).toHaveBeenCalledWith(
+      "/sessions/saved.jsonl",
+      { cwdOverride: "/workspace/projectA", withSession },
+    );
   });
 
   it("adopts the runtime-resolved cwd when switching without an explicit workspace override", async () => {
@@ -1705,9 +1722,10 @@ describe("PiSessionService", () => {
   it("forks via AgentSessionRuntime", async () => {
     const service = await PiSessionService.create(createConfig());
     const runtime = mockState.createdRuntimes[0]?.runtime;
+    const withSession = vi.fn().mockResolvedValue(undefined);
 
-    await expect(service.fork("known-id")).resolves.toEqual({ cancelled: false });
-    expect(runtime.fork).toHaveBeenCalledWith("known-id");
+    await expect(service.fork("known-id", { position: "before", withSession })).resolves.toEqual({ cancelled: false });
+    expect(runtime.fork).toHaveBeenCalledWith("known-id", { position: "before", withSession });
   });
 
   it("clears the active handle when extension rebinding fails during same-runtime forks", async () => {

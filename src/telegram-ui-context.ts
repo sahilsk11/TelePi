@@ -88,6 +88,7 @@ export function createTelegramUIContext(options: CreateTelegramUIContextOptions)
     },
     setStatus() {},
     setWorkingMessage() {},
+    setWorkingIndicator() {},
     setHiddenThinkingLabel() {},
     setWidget() {},
     setFooter() {},
@@ -104,6 +105,7 @@ export function createTelegramUIContext(options: CreateTelegramUIContextOptions)
     async editor() {
       unsupported("editor");
     },
+    addAutocompleteProvider() {},
     setEditorComponent() {},
     // Pi exposes ctx.ui.theme in degraded UI modes like RPC. TelePi does not render ANSI,
     // so we provide a plain-text shim instead of the interactive terminal Theme instance.

@@ -92,11 +92,19 @@ export interface ResolvedSessionReference {
   matchType: "path" | "id" | "prefix";
 }
 
-export interface PiSessionNewSessionOptions {
+type RuntimeNewSessionOptions = NonNullable<Parameters<AgentSessionRuntime["newSession"]>[0]>;
+type RuntimeSwitchSessionOptions = NonNullable<Parameters<AgentSessionRuntime["switchSession"]>[1]>;
+type RuntimeForkOptions = NonNullable<Parameters<AgentSessionRuntime["fork"]>[1]>;
+
+export interface PiSessionNewSessionOptions extends RuntimeNewSessionOptions {
   workspace?: string;
-  parentSession?: string;
-  setup?: (sessionManager: SessionManager) => Promise<void>;
 }
+
+export interface PiSessionSwitchOptions extends RuntimeSwitchSessionOptions {
+  workspace?: string;
+}
+
+export interface PiSessionForkOptions extends RuntimeForkOptions {}
 
 class SessionReferenceResolutionError extends Error {
   readonly code = "SESSION_REFERENCE_RESOLUTION_ERROR";
@@ -205,7 +213,7 @@ export async function createPiSession(
 async function createNewPiSession(
   config: TelePiConfig,
   workspace: string,
-  options?: Omit<PiSessionNewSessionOptions, "workspace">,
+  options?: Pick<PiSessionNewSessionOptions, "parentSession" | "setup">,
 ): Promise<PiSessionHandle> {
   const sessionManager = SessionManager.create(workspace);
   if (options?.parentSession) {
@@ -498,6 +506,10 @@ export class PiSessionService {
     const options = normalizeNewSessionOptions(request);
     const effectiveWorkspace = options.workspace ?? this.currentWorkspace;
 
+    if ((!this.handle || effectiveWorkspace !== this.currentWorkspace) && options.withSession) {
+      throw new Error("TelePi only supports withSession callbacks for runtime-backed new-session replacements.");
+    }
+
     if (!this.handle || effectiveWorkspace !== this.currentWorkspace) {
       const nextHandle = await createNewPiSession(this.config, effectiveWorkspace, options);
       await this.replaceHandle(nextHandle);
@@ -509,6 +521,7 @@ export class PiSessionService {
     const result = await this.getHandle().runtime.newSession({
       parentSession: options.parentSession,
       setup: options.setup,
+      withSession: options.withSession,
     });
     await this.rebindAfterRuntimeSessionReplacement(previousSession, previousWorkspace);
     return { info: this.getInfo(), created: !result.cancelled };
@@ -676,12 +689,20 @@ export class PiSessionService {
     }
   }
 
-  async switchSession(sessionPath: string, workspace?: string): Promise<PiSessionSwitchResult> {
+  async switchSession(
+    sessionPath: string,
+    request?: string | PiSessionSwitchOptions,
+  ): Promise<PiSessionSwitchResult> {
+    const options = normalizeSwitchSessionOptions(request);
     const resolvedReference = await this.tryResolveSessionReference(sessionPath);
     const runtimeSessionPath = resolvedReference?.path ?? resolveSessionPathForRuntime(sessionPath);
-    const effectiveWorkspace = workspace
+    const effectiveWorkspace = options.workspace
       ?? resolvedReference?.cwd
       ?? this.currentWorkspace;
+
+    if (!this.handle && options.withSession) {
+      throw new Error("TelePi only supports withSession callbacks for runtime-backed session switches.");
+    }
 
     if (!this.handle) {
       const nextHandle = await createPiSession(this.config, runtimeSessionPath, effectiveWorkspace);
@@ -696,6 +717,7 @@ export class PiSessionService {
     const previousWorkspace = this.currentWorkspace;
     const result = await this.getHandle().runtime.switchSession(runtimeSessionPath, {
       cwdOverride: effectiveWorkspace,
+      withSession: options.withSession,
     });
     await this.rebindAfterRuntimeSessionReplacement(previousSession, previousWorkspace);
     return {
@@ -770,10 +792,12 @@ export class PiSessionService {
     return this.getSession().navigateTree(targetId, options);
   }
 
-  async fork(entryId: string): Promise<{ cancelled: boolean }> {
+  async fork(entryId: string, options?: PiSessionForkOptions): Promise<{ cancelled: boolean }> {
     const previousSession = this.getSession();
     const previousWorkspace = this.currentWorkspace;
-    const result = await this.getHandle().runtime.fork(entryId);
+    const result = options
+      ? await this.getHandle().runtime.fork(entryId, options)
+      : await this.getHandle().runtime.fork(entryId);
     await this.rebindAfterRuntimeSessionReplacement(previousSession, previousWorkspace);
     return { cancelled: result.cancelled };
   }
@@ -1075,6 +1099,16 @@ export class PiSessionRegistry {
 function normalizeNewSessionOptions(
   request?: string | PiSessionNewSessionOptions,
 ): PiSessionNewSessionOptions {
+  if (typeof request === "string") {
+    return { workspace: request };
+  }
+
+  return request ?? {};
+}
+
+function normalizeSwitchSessionOptions(
+  request?: string | PiSessionSwitchOptions,
+): PiSessionSwitchOptions {
   if (typeof request === "string") {
     return { workspace: request };
   }

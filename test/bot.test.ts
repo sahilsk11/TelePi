@@ -2158,11 +2158,13 @@ describe("createBot", () => {
 
   it("forwards runtime-backed new-session options from extension command actions", async () => {
     const { bot, pi } = setupBot();
+    const withSession = vi.fn().mockResolvedValue(undefined);
 
     const promptMock = pi.service.prompt as ReturnType<typeof vi.fn>;
     promptMock.mockImplementation(async () => {
       await pi.getExtensionBindings()?.commandContextActions?.newSession({
         parentSession: "/tmp/handoff-parent.jsonl",
+        withSession,
       });
       pi.emitAgentEnd();
     });
@@ -2171,6 +2173,28 @@ describe("createBot", () => {
 
     expect(pi.service.newSession).toHaveBeenCalledWith({
       parentSession: "/tmp/handoff-parent.jsonl",
+      withSession,
+    });
+  });
+
+  it("forwards runtime-backed fork options from extension command actions", async () => {
+    const { bot, pi } = setupBot();
+    const withSession = vi.fn().mockResolvedValue(undefined);
+
+    const promptMock = pi.service.prompt as ReturnType<typeof vi.fn>;
+    promptMock.mockImplementation(async () => {
+      await pi.getExtensionBindings()?.commandContextActions?.fork("leaf1234", {
+        position: "before",
+        withSession,
+      });
+      pi.emitAgentEnd();
+    });
+
+    await bot.handleUpdate(createTestUpdate({ message: { text: "fork from extension" } }));
+
+    expect(pi.service.fork).toHaveBeenCalledWith("leaf1234", {
+      position: "before",
+      withSession,
     });
   });
 
@@ -2186,17 +2210,20 @@ describe("createBot", () => {
         }),
       },
     });
+    const withSession = vi.fn().mockResolvedValue(undefined);
     let switchResult: { cancelled: boolean } | undefined;
 
     const promptMock = pi.service.prompt as ReturnType<typeof vi.fn>;
     promptMock.mockImplementation(async () => {
-      switchResult = await pi.getExtensionBindings()?.commandContextActions?.switchSession("/tmp/other.jsonl");
+      switchResult = await pi.getExtensionBindings()?.commandContextActions?.switchSession("/tmp/other.jsonl", {
+        withSession,
+      });
       pi.emitAgentEnd();
     });
 
     await bot.handleUpdate(createTestUpdate({ message: { text: "switch from extension" } }));
 
-    expect(pi.service.switchSession).toHaveBeenCalledWith("/tmp/other.jsonl");
+    expect(pi.service.switchSession).toHaveBeenCalledWith("/tmp/other.jsonl", { withSession });
     expect(switchResult).toEqual({ cancelled: true });
   });
 

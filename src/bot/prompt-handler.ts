@@ -319,13 +319,13 @@ export function createPromptHandler(options: CreatePromptHandlerOptions): Handle
             const result = await piSession.newSession(options);
             return { cancelled: !result.created };
           },
-          fork: async (entryId) => piSession.fork(entryId),
+          fork: async (entryId, forkOptions) => piSession.fork(entryId, forkOptions),
           navigateTree: async (targetId, navOptions) => {
             const result = await piSession.navigateTree(targetId, navOptions);
             return { cancelled: result.cancelled };
           },
-          switchSession: async (sessionPath) => {
-            const result = await piSession.switchSession(sessionPath);
+          switchSession: async (sessionPath, switchOptions) => {
+            const result = await piSession.switchSession(sessionPath, switchOptions);
             return { cancelled: result.cancelled };
           },
           reload: async () => {
