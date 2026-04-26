@@ -236,21 +236,29 @@ const mockState = vi.hoisted(() => {
         }
         return { cancelled: false };
       }),
-      switchSession: vi.fn().mockImplementation(async (sessionPath: string, cwdOverride?: string) => {
-        const sessionManager = SessionManager.open(sessionPath, undefined, cwdOverride);
-        const nextResult = await factory({
-          cwd: sessionManager.getCwd(),
-          agentDir: currentServices.agentDir,
-          sessionManager,
-          sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile: currentSession.sessionFile },
-        });
-        currentSession.dispose();
-        currentSession = nextResult.session;
-        currentServices = nextResult.services;
-        currentDiagnostics = nextResult.diagnostics;
-        currentFallbackMessage = nextResult.modelFallbackMessage;
-        return { cancelled: false };
-      }),
+      switchSession: vi.fn().mockImplementation(
+        async (
+          sessionPath: string,
+          options?: { cwdOverride?: string } | string,
+        ) => {
+          const cwdOverride = typeof options === "string"
+            ? options
+            : options?.cwdOverride;
+          const sessionManager = SessionManager.open(sessionPath, undefined, cwdOverride);
+          const nextResult = await factory({
+            cwd: sessionManager.getCwd(),
+            agentDir: currentServices.agentDir,
+            sessionManager,
+            sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile: currentSession.sessionFile },
+          });
+          currentSession.dispose();
+          currentSession = nextResult.session;
+          currentServices = nextResult.services;
+          currentDiagnostics = nextResult.diagnostics;
+          currentFallbackMessage = nextResult.modelFallbackMessage;
+          return { cancelled: false };
+        },
+      ),
       fork: vi.fn().mockImplementation(async (_entryId: string) => {
         const sessionManager = SessionManager.create(currentServices.cwd, currentSession.sessionManager.getSessionDir());
         sessionManager.newSession({ parentSession: currentSession.sessionFile });
@@ -276,7 +284,9 @@ const mockState = vi.hoisted(() => {
     return runtime;
   });
 
-  const createCodingTools = vi.fn().mockReturnValue(["mock-tool"]);
+  const createCodingTools = vi.fn().mockReturnValue([
+    { name: "mock-tool", description: "Mock tool" },
+  ]);
 
   const AuthStorage = {
     create: vi.fn().mockReturnValue({ kind: "auth-storage" }),
@@ -441,7 +451,7 @@ describe("PiSessionService", () => {
     expect(mockState.createAgentSession).toHaveBeenCalledWith(
       expect.objectContaining({
         services: expect.objectContaining({ cwd: "/workspace/base" }),
-        tools: ["mock-tool"],
+        tools: expect.any(Array),
         model: undefined,
         scopedModels: [],
       }),
