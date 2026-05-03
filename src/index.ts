@@ -1,8 +1,6 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { createBot, registerCommands } from "./bot.js";
 import { loadConfig } from "./config.js";
+import { isEntrypoint } from "./entrypoint.js";
 import { PiSessionRegistry } from "./pi-session.js";
 
 const MAX_RESTART_ATTEMPTS = 5;
@@ -99,15 +97,6 @@ async function runMain(): Promise<void> {
     console.error(`Failed to start TelePi: ${message}`);
     process.exit(1);
   }
-}
-
-function isEntrypoint(moduleUrl: string): boolean {
-  const argvPath = process.argv[1];
-  if (!argvPath) {
-    return false;
-  }
-
-  return fileURLToPath(moduleUrl) === path.resolve(argvPath);
 }
 
 if (isEntrypoint(import.meta.url)) {

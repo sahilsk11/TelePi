@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { fileURLToPath, pathToFileURL } from "node:url";
-
+import { isEntrypoint } from "./entrypoint.js";
 import { getTelePiStatus, resolveTelePiInstallContext, setupTelePi } from "./install.js";
 import { startBot } from "./index.js";
 
@@ -130,10 +129,6 @@ async function runCli(): Promise<void> {
   }
 }
 
-const invokedAsScript = process.argv[1]
-  ? pathToFileURL(fileURLToPath(pathToFileURL(process.argv[1]).href)).href === import.meta.url
-  : false;
-
-if (invokedAsScript) {
+if (isEntrypoint(import.meta.url)) {
   await runCli();
 }
