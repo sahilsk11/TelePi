@@ -170,7 +170,7 @@ launchctl kickstart -k "gui/$UID/$label"`,
           );
 
           if (result.code === 0) {
-            ctx.ui.notify(`TelePi restarted via launchd job ${launchdLabel}. Check Telegram!`, "success");
+            ctx.ui.notify(`TelePi restarted via launchd job ${launchdLabel}. Check Telegram!`, "info");
             launched = true;
           } else {
             ctx.ui.notify(
@@ -255,7 +255,7 @@ PI_SESSION_PATH='${safeSessionFile}' nohup npx tsx src/index.ts > '${DIRECT_LOG_
               directLaunchTarget.kind === "installed"
                 ? `TelePi started via installed \`telepi\` (PID: ${pid}). Check Telegram!`
                 : `TelePi started from source checkout (PID: ${pid}). Check Telegram!`,
-              "success",
+              "info",
             );
             launched = true;
           } else {

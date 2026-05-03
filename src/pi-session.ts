@@ -962,10 +962,9 @@ export class PiSessionService {
     }
 
     const currentSession = this.getSession();
-    // AgentSessionRuntime replacements currently perform a process.chdir(runtime.cwd).
-    // TelePi therefore treats runtime.cwd as the source of truth after every runtime-driven
-    // session replacement and assumes these flows stay serialized enough to avoid surprising
-    // process-wide cwd races if maintainers add more concurrent workspace-sensitive work later.
+    // AgentSessionRuntime replacements track the effective workspace on runtime.cwd.
+    // TelePi treats runtime.cwd as the source of truth after every runtime-driven
+    // session replacement while keeping these flows serialized through the service instance.
     this.currentWorkspace = this.handle.runtime.cwd;
     if (previousSession === currentSession) {
       return;

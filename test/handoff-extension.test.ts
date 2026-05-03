@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -10,6 +10,12 @@ import {
 } from "../extensions/telepi-handoff.ts";
 
 describe("handoff extension helpers", () => {
+  it("uses only ExtensionUIContext-supported notification severities", () => {
+    const source = readFileSync(new URL("../extensions/telepi-handoff.ts", import.meta.url), "utf8");
+
+    expect(source).not.toContain('"success"');
+  });
+
   const originalEnv = process.env;
   const originalPlatform = process.platform;
   let tempDir: string;
