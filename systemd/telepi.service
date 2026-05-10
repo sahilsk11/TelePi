@@ -1,0 +1,17 @@
+[Unit]
+Description=TelePi Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__TELEPI_WORKDIR__
+ExecStart=__TELEPI_NODE_PATH__ __TELEPI_CLI_PATH__ start
+Environment=TELEPI_CONFIG=__TELEPI_CONFIG__
+Environment=PATH=__TELEPI_PATH_ENV__
+StandardOutput=append:__TELEPI_LOG_DIR__/telepi.out.log
+StandardError=append:__TELEPI_LOG_DIR__/telepi.err.log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
