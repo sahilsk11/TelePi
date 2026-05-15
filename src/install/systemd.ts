@@ -31,18 +31,18 @@ function buildUnitFile(context: TelePiInstallContext): string {
 
   let template = readFileSync(context.systemdTemplatePath, "utf8");
 
-  template = template.replace(/__TELEPI_WORKDIR__/g, escapeSystemdValue(context.workingDirectory));
-  template = template.replace(/__TELEPI_NODE_PATH__/g, escapeSystemdValue(context.nodeExecutablePath));
-  template = template.replace(/__TELEPI_CLI_PATH__/g, escapeSystemdValue(context.cliEntrypointPath));
-  template = template.replace(/__TELEPI_CONFIG__/g, escapeSystemdValue(context.configPath));
-  template = template.replace(
-    /__TELEPI_PATH_ENV__/g,
-    escapeSystemdValue(context.pathEnvironment ?? ""),
-  );
-  template = template.replace(
-    /__TELEPI_LOG_DIR__/g,
-    escapeSystemdValue(context.serviceUnitLogsDirectory ?? ""),
-  );
+  const stdoutPath = context.serviceUnitStdoutPath
+    ?? path.join(context.serviceUnitLogsDirectory ?? "", "telepi.out.log");
+  const stderrPath = context.serviceUnitStderrPath
+    ?? path.join(context.serviceUnitLogsDirectory ?? "", "telepi.err.log");
+
+  template = template.replace(/__TELEPI_WORKDIR__/g, formatSystemdValue(context.workingDirectory));
+  template = template.replace(/__TELEPI_NODE_PATH__/g, formatSystemdValue(context.nodeExecutablePath));
+  template = template.replace(/__TELEPI_CLI_PATH__/g, formatSystemdValue(context.cliEntrypointPath));
+  template = template.replace(/__TELEPI_CONFIG_ENV__/g, formatSystemdEnvironment("TELEPI_CONFIG", context.configPath));
+  template = template.replace(/__TELEPI_PATH_ENV__/g, formatSystemdEnvironment("PATH", context.pathEnvironment ?? ""));
+  template = template.replace(/__TELEPI_STDOUT_PATH__/g, formatSystemdValue(stdoutPath));
+  template = template.replace(/__TELEPI_STDERR_PATH__/g, formatSystemdValue(stderrPath));
 
   return template;
 }
@@ -200,8 +200,14 @@ function runSystemctl(actions: string[], args: string[]): void {
   }
 }
 
-function escapeSystemdValue(value: string): string {
-  // systemd unit values: no special escaping needed for simple paths.
-  // Backslashes and spaces should be quoted, but our paths are safe.
-  return value;
+function formatSystemdEnvironment(name: string, value: string): string {
+  return formatSystemdValue(`${name}=${value}`);
+}
+
+function formatSystemdValue(value: string): string {
+  if (!/[\s"\\]/.test(value)) {
+    return value;
+  }
+
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

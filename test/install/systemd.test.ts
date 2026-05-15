@@ -46,10 +46,10 @@ describe("SystemdManager", () => {
         "Type=simple",
         "WorkingDirectory=__TELEPI_WORKDIR__",
         "ExecStart=__TELEPI_NODE_PATH__ __TELEPI_CLI_PATH__ start",
-        "Environment=TELEPI_CONFIG=__TELEPI_CONFIG__",
-        "Environment=PATH=__TELEPI_PATH_ENV__",
-        "StandardOutput=append:__TELEPI_LOG_DIR__/telepi.out.log",
-        "StandardError=append:__TELEPI_LOG_DIR__/telepi.err.log",
+        "Environment=__TELEPI_CONFIG_ENV__",
+        "Environment=__TELEPI_PATH_ENV__",
+        "StandardOutput=append:__TELEPI_STDOUT_PATH__",
+        "StandardError=append:__TELEPI_STDERR_PATH__",
         "Restart=on-failure",
         "RestartSec=5",
         "",
@@ -89,9 +89,10 @@ describe("SystemdManager", () => {
       expect(unit).not.toContain("__TELEPI_WORKDIR__");
       expect(unit).not.toContain("__TELEPI_NODE_PATH__");
       expect(unit).not.toContain("__TELEPI_CLI_PATH__");
-      expect(unit).not.toContain("__TELEPI_CONFIG__");
+      expect(unit).not.toContain("__TELEPI_CONFIG_ENV__");
       expect(unit).not.toContain("__TELEPI_PATH_ENV__");
-      expect(unit).not.toContain("__TELEPI_LOG_DIR__");
+      expect(unit).not.toContain("__TELEPI_STDOUT_PATH__");
+      expect(unit).not.toContain("__TELEPI_STDERR_PATH__");
       expect(unit).toContain("Restart=on-failure");
       expect(unit).toContain("RestartSec=5");
       expect(unit).toContain("WantedBy=default.target");
@@ -104,6 +105,26 @@ describe("SystemdManager", () => {
       const unit = buildSystemdUnit(ctx);
 
       expect(unit).toContain("Environment=PATH=");
+    });
+
+    it("quotes systemd values that contain whitespace", () => {
+      const ctx = createLinuxContext();
+      ctx.workingDirectory = path.join(tempDir, "work dir");
+      ctx.nodeExecutablePath = path.join(tempDir, "node dir", "node");
+      ctx.cliEntrypointPath = path.join(tempDir, "TelePi checkout", "dist", "cli.js");
+      ctx.configPath = path.join(tempDir, "config dir", "config.env");
+      ctx.pathEnvironment = `${path.join(tempDir, "bin dir")}:/usr/bin`;
+      ctx.serviceUnitStdoutPath = path.join(tempDir, "log dir", "telepi.out.log");
+      ctx.serviceUnitStderrPath = path.join(tempDir, "log dir", "telepi.err.log");
+
+      const unit = buildSystemdUnit(ctx);
+
+      expect(unit).toContain(`WorkingDirectory="${ctx.workingDirectory}"`);
+      expect(unit).toContain(`ExecStart="${ctx.nodeExecutablePath}" "${ctx.cliEntrypointPath}" start`);
+      expect(unit).toContain(`Environment="TELEPI_CONFIG=${ctx.configPath}"`);
+      expect(unit).toContain(`Environment="PATH=${ctx.pathEnvironment}"`);
+      expect(unit).toContain(`StandardOutput=append:"${ctx.serviceUnitStdoutPath}"`);
+      expect(unit).toContain(`StandardError=append:"${ctx.serviceUnitStderrPath}"`);
     });
 
     it("throws when template is missing", () => {
