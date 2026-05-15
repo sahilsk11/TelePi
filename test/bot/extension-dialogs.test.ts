@@ -4,6 +4,8 @@ import type { PiSessionContext } from "../../src/pi-session.js";
 
 describe("extension dialog manager", () => {
   const target: PiSessionContext = { chatId: 123 };
+  const topicTarget: PiSessionContext = { chatId: 123, messageThreadId: 77 };
+  const rootTarget: PiSessionContext = { chatId: 123 };
 
   function createManager() {
     const sendTextMessage = vi.fn().mockResolvedValue({ message_id: 1 });
@@ -39,6 +41,27 @@ describe("extension dialog manager", () => {
     const selected = renderDialogPanel("Pick one", ["Selected: Beta"], "✅");
     expect(editMessage).toHaveBeenCalledWith(
       target,
+      1,
+      selected.text,
+      expect.objectContaining({ fallbackText: selected.fallbackText, parseMode: "HTML" }),
+    );
+    await expect(pendingChoice).resolves.toBe("Beta");
+  });
+
+  it("resolves select dialogs by dialogId when the callback target loses its thread context", async () => {
+    const { manager, editMessage } = createManager();
+
+    const pendingChoice = manager.openSelect(topicTarget, "Pick one", ["Alpha", "Beta"]);
+    await Promise.resolve();
+
+    const result = await manager.resolveSelect(rootTarget, "1", 1, 1);
+    expect(result.callbackText).toBe("Selected Beta");
+
+    await result.afterAnswer?.();
+
+    const selected = renderDialogPanel("Pick one", ["Selected: Beta"], "✅");
+    expect(editMessage).toHaveBeenCalledWith(
+      rootTarget,
       1,
       selected.text,
       expect.objectContaining({ fallbackText: selected.fallbackText, parseMode: "HTML" }),
@@ -120,6 +143,42 @@ describe("extension dialog manager", () => {
     expect(cancelResult.callbackText).toBe("Cancelled");
     await cancelResult.afterAnswer?.();
     await expect(pendingSelect).resolves.toBeUndefined();
+  });
+
+  it("resolves confirm and cancel callbacks by dialogId even when callback message IDs are missing", async () => {
+    const { manager, editMessage } = createManager();
+
+    const pendingConfirm = manager.openConfirm(topicTarget, "Confirm deploy", "Ship it?");
+    await Promise.resolve();
+
+    const confirmResult = await manager.resolveConfirm(rootTarget, "1", undefined, true);
+    expect(confirmResult.callbackText).toBe("Confirmed");
+    await confirmResult.afterAnswer?.();
+    await expect(pendingConfirm).resolves.toBe(true);
+    const confirmed = renderDialogPanel("Confirm deploy", ["Confirmed."], "✅");
+    expect(editMessage).toHaveBeenCalledWith(
+      rootTarget,
+      1,
+      confirmed.text,
+      expect.objectContaining({ fallbackText: confirmed.fallbackText, parseMode: "HTML" }),
+    );
+
+    editMessage.mockClear();
+
+    const pendingInput = manager.openInput(topicTarget, "Name", "Your name");
+    await Promise.resolve();
+
+    const cancelResult = await manager.resolveCancel(rootTarget, "2", undefined);
+    expect(cancelResult.callbackText).toBe("Cancelled");
+    await cancelResult.afterAnswer?.();
+    await expect(pendingInput).resolves.toBeUndefined();
+    const cancelled = renderDialogPanel("Name", ["Dialog cancelled."], "⛔");
+    expect(editMessage).toHaveBeenCalledWith(
+      rootTarget,
+      1,
+      cancelled.text,
+      expect.objectContaining({ fallbackText: cancelled.fallbackText, parseMode: "HTML" }),
+    );
   });
 
   it("still resolves extension promises when finalizing the dialog message fails", async () => {
