@@ -25,6 +25,7 @@ import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Api, ImageContent, Model } from "@mariozechner/pi-ai";
 
 import type { TelePiConfig } from "./config.js";
+import { ChatSessionStore } from "./chat-session-store.js";
 import { createProviderResponseNoticeExtension } from "./provider-response-notices.js";
 import {
   resolveInitialScopedModelSelection,
@@ -35,6 +36,7 @@ import {
   resolveSessionPathForRuntime,
   resolveWorkspacePathForRuntime,
 } from "./pi-session-paths.js";
+import { getDefaultChatSessionStorePath } from "./paths.js";
 import { describeEntry, type SessionTreeNodeLike as SessionTreeNode } from "./tree.js";
 
 /**
@@ -597,6 +599,7 @@ export class PiSessionService {
   private sessionCallbacks?: PiSessionCallbacks;
   private sessionUnsubscribe?: () => void;
   private extensionBindings?: Parameters<AgentSession["bindExtensions"]>[0];
+  private onSessionChanged?: (sessionFile: string | undefined, workspace: string) => void;
 
   private constructor(private readonly config: TelePiConfig) {
     this.currentWorkspace = config.workspace;
@@ -654,6 +657,18 @@ export class PiSessionService {
     };
   }
 
+  setOnSessionChanged(callback: (sessionFile: string | undefined, workspace: string) => void): void {
+    this.onSessionChanged = callback;
+  }
+
+  private notifySessionChanged(): void {
+    if (!this.onSessionChanged) {
+      return;
+    }
+    const info = this.getInfo();
+    this.onSessionChanged(info.sessionFile, info.workspace);
+  }
+
   subscribe(callbacks: PiSessionCallbacks): () => void {
     this.sessionCallbacks = callbacks;
     this.rebindSessionSubscription();
@@ -670,6 +685,7 @@ export class PiSessionService {
   async prompt(text: string, images?: ImageContent[]): Promise<void> {
     this.reloadAuthStorage();
     await promptSession(this.getSession(), text, images);
+    this.notifySessionChanged();
   }
 
   async bindExtensions(bindings: Parameters<AgentSession["bindExtensions"]>[0]): Promise<void> {
@@ -758,6 +774,7 @@ export class PiSessionService {
     if (!this.handle || effectiveWorkspace !== this.currentWorkspace) {
       const nextHandle = await createNewPiSession(this.config, effectiveWorkspace, options);
       await this.replaceHandle(nextHandle);
+      this.notifySessionChanged();
       return { info: this.getInfo(), created: true };
     }
 
@@ -769,6 +786,7 @@ export class PiSessionService {
       withSession: options.withSession,
     });
     await this.rebindAfterRuntimeSessionReplacement(previousSession, previousWorkspace);
+    this.notifySessionChanged();
     return { info: this.getInfo(), created: !result.cancelled };
   }
 
@@ -954,6 +972,7 @@ export class PiSessionService {
     if (!this.handle) {
       const nextHandle = await createPiSession(this.config, runtimeSessionPath, effectiveWorkspace);
       await this.replaceHandle(nextHandle);
+      this.notifySessionChanged();
       return {
         ...this.getInfo(),
         cancelled: false,
@@ -967,6 +986,7 @@ export class PiSessionService {
       withSession: options.withSession,
     });
     await this.rebindAfterRuntimeSessionReplacement(previousSession, previousWorkspace);
+    this.notifySessionChanged();
     return {
       ...this.getInfo(),
       cancelled: result.cancelled,
@@ -1044,6 +1064,7 @@ export class PiSessionService {
     const previousWorkspace = this.currentWorkspace;
     const result = await this.getHandle().runtime.fork(entryId, options);
     await this.rebindAfterRuntimeSessionReplacement(previousSession, previousWorkspace);
+    this.notifySessionChanged();
     return { cancelled: result.cancelled };
   }
 
@@ -1236,12 +1257,14 @@ export class PiSessionRegistry {
   private readonly generations = new Map<string, number>();
   private bootstrapSessionPath?: string;
 
-  private constructor(private readonly config: TelePiConfig) {
+  private constructor(private readonly config: TelePiConfig, private readonly store: ChatSessionStore) {
     this.bootstrapSessionPath = config.piSessionPath;
   }
 
-  static async create(config: TelePiConfig): Promise<PiSessionRegistry> {
-    return new PiSessionRegistry(config);
+  static async create(config: TelePiConfig, storePath?: string): Promise<PiSessionRegistry> {
+    const resolvedStorePath = storePath ?? getDefaultChatSessionStorePath();
+    const store = ChatSessionStore.load(resolvedStorePath);
+    return new PiSessionRegistry(config, store);
   }
 
   has(context: PiSessionContext): boolean {
@@ -1276,7 +1299,7 @@ export class PiSessionRegistry {
     }
 
     const generation = this.bumpGeneration(key);
-    const createPromise = PiSessionService.create(this.createServiceConfig())
+    const createPromise = PiSessionService.create(this.createServiceConfig(key))
       .then((service) => {
         this.inflight.delete(key);
 
@@ -1288,6 +1311,15 @@ export class PiSessionRegistry {
           }
           throw new Error("Session removed during initialization");
         }
+
+        // Wire up persistence callback
+        service.setOnSessionChanged((sessionFile, workspace) => {
+          if (sessionFile) {
+            this.store.set(key, { sessionFile, workspace });
+          } else {
+            this.store.delete(key);
+          }
+        });
 
         this.services.set(key, service);
         return service;
@@ -1308,6 +1340,7 @@ export class PiSessionRegistry {
     service?.dispose();
     this.services.delete(key);
     this.inflight.delete(key);
+    this.store.delete(key);
   }
 
   dispose(): void {
@@ -1322,12 +1355,36 @@ export class PiSessionRegistry {
     this.inflight.clear();
   }
 
-  private createServiceConfig(): TelePiConfig {
+  private createServiceConfig(contextKey: string): TelePiConfig {
     const initialSessionPath = this.consumeBootstrapSessionPath();
+
+    // Bootstrap path (PI_SESSION_PATH env var) takes precedence.
+    if (initialSessionPath) {
+      return {
+        ...this.config,
+        telegramAllowedUserIdSet: new Set(this.config.telegramAllowedUserIds),
+        piSessionPath: initialSessionPath,
+      };
+    }
+
+    // Check the store for a previously-known session for this context key.
+    const stored = this.store.get(contextKey);
+    if (stored) {
+      const runtimeSessionPath = resolveSessionPathForRuntime(stored.sessionFile);
+      if (existsSync(runtimeSessionPath)) {
+        return {
+          ...this.config,
+          telegramAllowedUserIdSet: new Set(this.config.telegramAllowedUserIds),
+          piSessionPath: runtimeSessionPath,
+          workspace: stored.workspace,
+        };
+      }
+    }
+
     return {
       ...this.config,
       telegramAllowedUserIdSet: new Set(this.config.telegramAllowedUserIds),
-      piSessionPath: initialSessionPath,
+      piSessionPath: undefined,
     };
   }
 
