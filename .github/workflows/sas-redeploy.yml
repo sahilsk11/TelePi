@@ -1,0 +1,35 @@
+name: SAS redeploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: sas-redeploy-telepi-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  redeploy:
+    name: Redeploy TelePi on SAS
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger targeted SAS deploy
+        env:
+          GH_TOKEN: ${{ secrets.SAS_DEPLOY_GITHUB_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::SAS_DEPLOY_GITHUB_TOKEN is not configured"
+            exit 1
+          fi
+
+          gh workflow run deploy.yml \
+            --repo sahilsk11/sas \
+            --ref main \
+            --field tags=telepi
