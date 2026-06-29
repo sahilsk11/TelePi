@@ -2111,4 +2111,172 @@ describe("PiSessionService", () => {
     await expect(pending).rejects.toThrow("Session removed during initialization");
     expect(registry.get({ chatId: 11, messageThreadId: 4 })).toBeUndefined();
   });
+
+  it("store is consulted on getOrCreate: opens stored session on simulated restart", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "telepi-store-test-"));
+
+    try {
+      const storePath = path.join(tempDir, "chat-sessions.json");
+      const sessionFile = path.join(tempDir, "stored-session.jsonl");
+      // Create the session file so existsSync passes
+      writeFileSync(sessionFile, `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "stored-session-id",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: "/workspace/stored",
+      })}\n`);
+
+      // Pre-populate the store (simulating a previous run's persisted data)
+      const storeData = {
+        version: 1,
+        entries: {
+          "42::root": { sessionFile, workspace: "/workspace/stored" },
+        },
+      };
+      writeFileSync(storePath, JSON.stringify(storeData), "utf8");
+      mockState.setSessionPathWorkspace(sessionFile, "/workspace/stored");
+
+      const registry = await PiSessionRegistry.create(createConfig(), storePath);
+      await registry.getOrCreate({ chatId: 42 });
+
+      // Should have opened the stored session path rather than creating a new one
+      expect(mockState.SessionManager.open).toHaveBeenCalledWith(
+        sessionFile,
+        undefined,
+        "/workspace/stored",
+      );
+      expect(mockState.SessionManager.create).not.toHaveBeenCalled();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("store is written after prompt: store entry is set with the session file", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "telepi-store-test-"));
+
+    try {
+      const storePath = path.join(tempDir, "chat-sessions.json");
+      const registry = await PiSessionRegistry.create(createConfig(), storePath);
+      const service = await registry.getOrCreate({ chatId: 55 });
+
+      // Before prompt, store should be empty (no session file yet from fresh session)
+      // After prompt, the session file should be persisted
+      await service.prompt("hello world");
+
+      const { ChatSessionStore } = await import("../src/chat-session-store.js");
+      const store = ChatSessionStore.load(storePath);
+      const entry = store.get("55::root");
+      expect(entry).toBeDefined();
+      expect(entry?.sessionFile).toBeTruthy();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("store is cleared on remove: store entry is deleted", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "telepi-store-test-"));
+
+    try {
+      const storePath = path.join(tempDir, "chat-sessions.json");
+      const registry = await PiSessionRegistry.create(createConfig(), storePath);
+      await registry.getOrCreate({ chatId: 77 });
+
+      // Trigger a session-changed notification by prompting
+      const service = registry.get({ chatId: 77 });
+      await service?.prompt("test");
+
+      // Now remove — should clear from store
+      registry.remove({ chatId: 77 });
+
+      const { ChatSessionStore } = await import("../src/chat-session-store.js");
+      const store = ChatSessionStore.load(storePath);
+      expect(store.get("77::root")).toBeUndefined();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("store is updated on switchSession: store entry reflects the new session file", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "telepi-store-test-"));
+
+    try {
+      const storePath = path.join(tempDir, "chat-sessions.json");
+      const targetWorkspace = mkdtempSync(path.join(tmpdir(), "telepi-ws-"));
+      const sessionPath = path.join(targetWorkspace, "switched.jsonl");
+      writeFileSync(sessionPath, `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "switched-id",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: targetWorkspace,
+      })}\n`);
+      mockState.setSessionPathWorkspace(sessionPath, targetWorkspace);
+
+      const registry = await PiSessionRegistry.create(createConfig(), storePath);
+      const service = await registry.getOrCreate({ chatId: 88 });
+
+      await service.switchSession(sessionPath, targetWorkspace);
+
+      const { ChatSessionStore } = await import("../src/chat-session-store.js");
+      const store = ChatSessionStore.load(storePath);
+      const entry = store.get("88::root");
+      expect(entry).toBeDefined();
+      expect(entry?.sessionFile).toBe(sessionPath);
+      expect(entry?.workspace).toBe(targetWorkspace);
+
+      rmSync(targetWorkspace, { recursive: true, force: true });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("store entry is cleared on /new before first prompt (undefined session file)", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "telepi-store-test-"));
+
+    try {
+      const storePath = path.join(tempDir, "chat-sessions.json");
+      const sessionFile = path.join(tempDir, "previous-session.jsonl");
+      writeFileSync(sessionFile, `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "prev-id",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: "/workspace/base",
+      })}\n`);
+
+      const storeData = {
+        version: 1,
+        entries: {
+          "99::root": { sessionFile, workspace: "/workspace/base" },
+        },
+      };
+      writeFileSync(storePath, JSON.stringify(storeData), "utf8");
+      mockState.setSessionPathWorkspace(sessionFile, "/workspace/base");
+
+      const registry = await PiSessionRegistry.create(createConfig(), storePath);
+      const service = await registry.getOrCreate({ chatId: 99 });
+
+      // Call newSession — the fresh session has no session file yet (undefined)
+      // so the store entry should be deleted
+      await service.newSession();
+
+      const { ChatSessionStore } = await import("../src/chat-session-store.js");
+      const store = ChatSessionStore.load(storePath);
+      // After newSession, the fresh session might not have a session file yet
+      // The notifySessionChanged with undefined sessionFile deletes the entry
+      const entry = store.get("99::root");
+      // The entry may or may not exist depending on whether the new session already
+      // has a session file - the important thing is that if sessionFile is undefined,
+      // the entry is removed
+      const newSessionFile = service.getInfo().sessionFile;
+      if (newSessionFile) {
+        expect(entry?.sessionFile).toBe(newSessionFile);
+      } else {
+        expect(entry).toBeUndefined();
+      }
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
