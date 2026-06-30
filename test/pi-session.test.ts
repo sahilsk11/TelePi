@@ -452,6 +452,7 @@ describe("PiSessionService", () => {
     workspace: "/workspace/base",
     piSessionPath: undefined,
     piModel: undefined,
+    piTools: undefined,
     toolVerbosity: "summary",
     promptInboxDir: undefined,
     uploadsDir: "/tmp/telepi-uploads",
@@ -525,6 +526,22 @@ describe("PiSessionService", () => {
     expect(service.getSession().getActiveToolNames()).toEqual(
       expect.arrayContaining(["read", "bash", "edit", "write", "find", "ls", "extension-tool"]),
     );
+  });
+
+  it("passes configured Pi profile tools to the SDK without force-enabling coding built-ins", async () => {
+    const piTools = ["read", "bash", "mcp", "hindsight_recall"];
+
+    const service = await PiSessionService.create(createConfig({ piTools }));
+    const currentSession = mockState.createdSessions[0]?.session;
+
+    expect(mockState.createCodingTools).not.toHaveBeenCalled();
+    expect(mockState.createAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: piTools,
+      }),
+    );
+    expect(currentSession.setActiveToolsByName).not.toHaveBeenCalled();
+    expect(service.getSession().getActiveToolNames()).toEqual(piTools);
   });
 
   it("collects runtime diagnostics for Telegram-visible session info", async () => {
