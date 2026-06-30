@@ -105,7 +105,9 @@ The npm global install is the main path for TelePi on macOS (`launchd`) and Linu
    TELEPI_WORKSPACE=/Users/you/your-main-project
    ```
    Notes:
+   - `TELEPI_PROFILE` or `PI_AGENT_PROFILE` can point at a Pi agent profile manifest that provides the Pi agent directory, session directory, default workspace, and tool allowlist
    - `TELEPI_WORKSPACE` is strongly recommended in installed mode so fresh Telegram sessions start in the right project
+   - `TELEPI_WORKSPACE`, `TELEPI_PI_AGENT_DIR`, `TELEPI_PI_SESSION_DIR`, and `TELEPI_PI_TOOLS` override profile manifest values when set
    - `PI_SESSION_PATH` is usually injected automatically by `/handoff`
    - `OPENAI_API_KEY`, `SHERPA_ONNX_MODEL_DIR`, `PI_MODEL`, and `TOOL_VERBOSITY` are optional
 4. Verify the install:
@@ -157,7 +159,7 @@ Use a source checkout when you want to hack on TelePi or run the latest unreleas
    Replace the example values from `.env.example` with your real settings. At minimum set:
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_ALLOWED_USER_IDS`
-   - `TELEPI_WORKSPACE` if you want fresh Telegram sessions rooted somewhere other than the repo directory
+   - `TELEPI_PROFILE`/`PI_AGENT_PROFILE`, or `TELEPI_WORKSPACE` if you want fresh Telegram sessions rooted somewhere other than the repo directory
 3. Start the bot in development mode:
    ```bash
    npm run dev
