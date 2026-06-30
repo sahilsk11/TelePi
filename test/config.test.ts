@@ -26,12 +26,17 @@ describe("loadConfig", () => {
     delete process.env.TELEGRAM_ALLOWED_USER_IDS;
     delete process.env.PI_MODEL;
     delete process.env.PI_SESSION_PATH;
+    delete process.env.PI_AGENT_PROFILE;
     delete process.env.PI_CODING_AGENT_DIR;
+    delete process.env.PI_CODING_AGENT_SESSION_DIR;
     delete process.env.TOOL_VERBOSITY;
     delete process.env.TELEPI_CONFIG;
     delete process.env.TELEPI_WORKSPACE;
     delete process.env.TELEPI_UPLOADS_DIR;
+    delete process.env.TELEPI_PROFILE;
+    delete process.env.TELEPI_PI_AGENT_DIR;
     delete process.env.TELEPI_PI_PROFILE;
+    delete process.env.TELEPI_PI_SESSION_DIR;
     delete process.env.TELEPI_PI_TOOLS;
     delete process.env.TELEPI_PROMPT_INBOX_DIR;
     delete process.env.TELEPI_PROMPT_INBOX_INTERVAL_MS;
@@ -58,8 +63,10 @@ describe("loadConfig", () => {
       telegramBotToken: "bot-token",
       telegramAllowedUserIds: [123, 456],
       telegramAllowedUserIdSet: new Set([123, 456]),
+      piProfile: undefined,
       workspace: cwdDir,
       piSessionPath: "/tmp/session.jsonl",
+      piSessionDir: undefined,
       piModel: "anthropic/claude-sonnet-4-5",
       piTools: undefined,
       toolVerbosity: "all",
@@ -149,6 +156,58 @@ describe("loadConfig", () => {
 
     const config = loadConfig();
 
+    expect(config.piTools).toEqual(["edit", "write"]);
+  });
+
+  it("loads workspace, session dir, agent dir, and tools from a Pi agent profile manifest", () => {
+    const profilePath = path.join(tempDir, "profiles", "mark2", "profile.json");
+    writeFile(profilePath, JSON.stringify({
+      id: "mark2",
+      agentDir: "./agent",
+      sessionDir: "./state/sessions",
+      workspace: "./workspace",
+      tools: ["read", "bash", "read", "hindsight_recall"],
+    }));
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.PI_AGENT_PROFILE = profilePath;
+
+    const config = loadConfig();
+
+    expect(config.piProfile).toEqual({
+      id: "mark2",
+      path: profilePath,
+      agentDir: path.join(tempDir, "profiles", "mark2", "agent"),
+      sessionDir: path.join(tempDir, "profiles", "mark2", "state", "sessions"),
+      workspace: path.join(tempDir, "profiles", "mark2", "workspace"),
+      tools: ["read", "bash", "hindsight_recall"],
+    });
+    expect(config.workspace).toBe(path.join(tempDir, "profiles", "mark2", "workspace"));
+    expect(config.piSessionDir).toBe(path.join(tempDir, "profiles", "mark2", "state", "sessions"));
+    expect(config.piTools).toEqual(["read", "bash", "hindsight_recall"]);
+  });
+
+  it("lets TelePi-specific env override profile workspace, session dir, agent dir, and tools", () => {
+    const profilePath = path.join(tempDir, "profiles", "assistant.json");
+    writeFile(profilePath, JSON.stringify({
+      agentDir: "./agent",
+      sessionDir: "./sessions",
+      workspace: "./workspace",
+      tools: ["read"],
+    }));
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.TELEPI_PROFILE = profilePath;
+    process.env.TELEPI_WORKSPACE = "./override-workspace";
+    process.env.TELEPI_PI_AGENT_DIR = "./override-agent";
+    process.env.TELEPI_PI_SESSION_DIR = "./override-sessions";
+    process.env.TELEPI_PI_TOOLS = "edit,write";
+
+    const config = loadConfig();
+
+    expect(config.piProfile?.agentDir).toBe(path.join(cwdDir, "override-agent"));
+    expect(config.workspace).toBe(path.join(cwdDir, "override-workspace"));
+    expect(config.piSessionDir).toBe(path.join(cwdDir, "override-sessions"));
     expect(config.piTools).toEqual(["edit", "write"]);
   });
 

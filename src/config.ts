@@ -15,8 +15,10 @@ export interface TelePiConfig {
   telegramBotToken: string;
   telegramAllowedUserIds: number[];
   telegramAllowedUserIdSet: Set<number>;
+  piProfile?: ResolvedPiAgentProfile;
   workspace: string;
   piSessionPath?: string;
+  piSessionDir?: string;
   piModel?: string;
   piTools?: string[];
   toolVerbosity: ToolVerbosity;
@@ -35,6 +37,24 @@ export interface TelePiConfigPathInfo {
   source: TelePiConfigPathSource;
 }
 
+export interface ResolvedPiAgentProfile {
+  id?: string;
+  path: string;
+  agentDir?: string;
+  sessionDir?: string;
+  workspace?: string;
+  tools?: string[];
+}
+
+interface PiAgentProfileFile {
+  id?: unknown;
+  agentDir?: unknown;
+  sessionDir?: unknown;
+  workspace?: unknown;
+  defaultWorkspace?: unknown;
+  tools?: unknown;
+}
+
 const DEFAULT_PROMPT_INBOX_INTERVAL_MS = 60_000;
 const MIN_PROMPT_INBOX_INTERVAL_MS = 1_000;
 
@@ -46,10 +66,14 @@ export function loadConfig(): TelePiConfig {
 
   const telegramBotToken = requireEnv("TELEGRAM_BOT_TOKEN");
   const telegramAllowedUserIds = parseAllowedUserIds(requireEnv("TELEGRAM_ALLOWED_USER_IDS"));
-  const workspace = resolveWorkspace();
+  const piProfile = resolvePiAgentProfile();
+  const workspace = resolveWorkspace(piProfile);
   const piSessionPath = optionalString(process.env.PI_SESSION_PATH);
+  const piSessionDir = resolveOptionalPath(process.env.TELEPI_PI_SESSION_DIR)
+    ?? resolveOptionalPath(process.env.PI_CODING_AGENT_SESSION_DIR)
+    ?? piProfile?.sessionDir;
   const piModel = optionalString(process.env.PI_MODEL);
-  const piTools = resolvePiTools();
+  const piTools = resolvePiTools(piProfile);
   const toolVerbosity = parseToolVerbosity(optionalString(process.env.TOOL_VERBOSITY));
   const uploadsDir = resolveOptionalPath(process.env.TELEPI_UPLOADS_DIR) ?? getDefaultTelePiUploadsDir();
   const promptInboxDir = resolveOptionalPath(process.env.TELEPI_PROMPT_INBOX_DIR);
@@ -59,8 +83,10 @@ export function loadConfig(): TelePiConfig {
     telegramBotToken,
     telegramAllowedUserIds,
     telegramAllowedUserIdSet: new Set(telegramAllowedUserIds),
+    piProfile,
     workspace,
     piSessionPath,
+    piSessionDir,
     piModel,
     piTools,
     toolVerbosity,
@@ -115,9 +141,10 @@ export function getConfigEnvPathInfo(): TelePiConfigPathInfo {
  * Workspace is derived automatically:
  * - In Docker: /workspace (the mount point)
  * - TELEPI_WORKSPACE when set outside Docker
+ * - selected Pi agent profile workspace/defaultWorkspace
  * - Otherwise: process.cwd() (same as running Pi normally)
  */
-function resolveWorkspace(): string {
+function resolveWorkspace(piProfile: ResolvedPiAgentProfile | undefined): string {
   if (isRunningInDocker()) {
     return DOCKER_WORKSPACE_PATH;
   }
@@ -125,6 +152,10 @@ function resolveWorkspace(): string {
   const overriddenWorkspace = optionalString(process.env.TELEPI_WORKSPACE);
   if (overriddenWorkspace) {
     return resolvePathFromCwd(overriddenWorkspace);
+  }
+
+  if (piProfile?.workspace) {
+    return piProfile.workspace;
   }
 
   return process.cwd();
@@ -188,13 +219,13 @@ function resolveOptionalPath(value: string | undefined): string | undefined {
   return normalized ? resolvePathFromCwd(normalized) : undefined;
 }
 
-function resolvePiTools(): string[] | undefined {
+function resolvePiTools(piProfile: ResolvedPiAgentProfile | undefined): string[] | undefined {
   const explicitTools = parsePiTools(optionalString(process.env.TELEPI_PI_TOOLS));
   if (explicitTools) {
     return explicitTools;
   }
 
-  return readPiProfileTools(resolvePiProfilePath());
+  return piProfile?.tools ?? readPiProfileTools(resolvePiProfilePath());
 }
 
 function resolvePiProfilePath(): string | undefined {
@@ -209,6 +240,81 @@ function resolvePiProfilePath(): string | undefined {
   }
 
   return path.join(resolveTildePath(agentDir), "profile.json");
+}
+
+function resolvePiAgentProfile(): ResolvedPiAgentProfile | undefined {
+  const profilePath = resolveSelectedProfilePath();
+  if (!profilePath) {
+    return undefined;
+  }
+
+  const profile = readPiAgentProfile(profilePath);
+  if (!profile) {
+    return undefined;
+  }
+
+  const profileDir = path.dirname(profilePath);
+  const explicitAgentDir = resolveOptionalPath(process.env.TELEPI_PI_AGENT_DIR)
+    ?? resolveOptionalPath(process.env.PI_CODING_AGENT_DIR);
+  const manifestAgentDir = resolveProfilePathValue(profile.agentDir, profileDir);
+  const agentDir = explicitAgentDir ?? manifestAgentDir ?? profileDir;
+  const sessionDir = resolveProfilePathValue(profile.sessionDir, profileDir);
+  const workspace = resolveProfilePathValue(profile.workspace ?? profile.defaultWorkspace, profileDir);
+  const tools = Array.isArray(profile.tools) ? normalizeToolNames(profile.tools) : undefined;
+
+  return {
+    ...(typeof profile.id === "string" && profile.id.trim() ? { id: profile.id.trim() } : {}),
+    path: profilePath,
+    agentDir,
+    ...(sessionDir ? { sessionDir } : {}),
+    ...(workspace ? { workspace } : {}),
+    ...(tools ? { tools } : {}),
+  };
+}
+
+function resolveSelectedProfilePath(): string | undefined {
+  const selected = optionalString(process.env.TELEPI_PROFILE)
+    ?? optionalString(process.env.PI_AGENT_PROFILE)
+    ?? optionalString(process.env.TELEPI_PI_PROFILE);
+  if (!selected) {
+    return resolvePiProfilePath();
+  }
+
+  if (selected === "mark2") {
+    return "/home/sahil/projects/mark-2/config/pi-agent/profile.json";
+  }
+
+  const resolved = resolveTildePath(selected);
+  if (existsSync(resolved)) {
+    return resolved;
+  }
+
+  throw new Error(`Unknown Pi agent profile: ${selected}`);
+}
+
+function readPiAgentProfile(profilePath: string): PiAgentProfileFile | undefined {
+  if (!existsSync(profilePath)) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(readFileSync(profilePath, "utf8")) as PiAgentProfileFile;
+  } catch (error) {
+    console.warn(`Ignoring ${profilePath}: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
+function resolveProfilePathValue(value: unknown, baseDir: string): string | undefined {
+  if (typeof value !== "string" || value.trim() === "") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed === "~" || trimmed.startsWith("~/")) {
+    return resolveTildePath(trimmed);
+  }
+  return path.isAbsolute(trimmed) ? trimmed : path.resolve(baseDir, trimmed);
 }
 
 function readPiProfileTools(profilePath: string | undefined): string[] | undefined {

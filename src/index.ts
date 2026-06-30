@@ -19,7 +19,15 @@ export async function startBot(): Promise<void> {
     await registerCommands(bot);
 
     console.log("TelePi running");
+    if (config.piProfile) {
+      const profileName = config.piProfile.id ?? config.piProfile.path;
+      console.log(`Pi profile: ${profileName}`);
+      console.log(`Pi agent dir: ${config.piProfile.agentDir ?? "(default)"}`);
+    }
     console.log(`Default workspace: ${config.workspace}`);
+    if (config.piSessionDir) {
+      console.log(`Pi session dir: ${config.piSessionDir}`);
+    }
     if (config.piSessionPath) {
       console.log(`Bootstrap session: ${config.piSessionPath}`);
     }

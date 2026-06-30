@@ -448,7 +448,7 @@ async function createNewPiSession(
   workspace: string,
   options?: Pick<PiSessionNewSessionOptions, "parentSession" | "setup">,
 ): Promise<PiSessionHandle> {
-  const sessionManager = SessionManager.create(workspace);
+  const sessionManager = createSessionManagerForWorkspace(workspace, config.piSessionDir);
   if (options?.parentSession) {
     sessionManager.newSession({ parentSession: options.parentSession });
   }
@@ -535,7 +535,7 @@ async function createPiSessionHandle(
 
   const runtime = await createAgentSessionRuntime(createRuntime, {
     cwd: workspace,
-    agentDir: getAgentDir(),
+    agentDir: config.piProfile?.agentDir ?? getAgentDir(),
     sessionManager,
     ...(initialSessionStartEvent ? {
       sessionStartEvent: {
@@ -1517,12 +1517,16 @@ function createSessionManager(
     const headerWorkspace = resolveWorkspacePathForRuntime(readSessionHeader(runtimeSessionPath)?.cwd);
     return SessionManager.open(
       runtimeSessionPath,
-      undefined,
+      config.piSessionDir ?? undefined,
       hasWorkspaceOverride ? workspace : (headerWorkspace ?? workspace),
     );
   }
 
-  return SessionManager.create(workspace);
+  return createSessionManagerForWorkspace(workspace, config.piSessionDir);
+}
+
+function createSessionManagerForWorkspace(workspace: string, sessionDir: string | undefined): SessionManager {
+  return sessionDir ? SessionManager.create(workspace, sessionDir) : SessionManager.create(workspace);
 }
 
 function resolveModelOverride(
