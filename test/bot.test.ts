@@ -3124,6 +3124,56 @@ describe("createBot", () => {
     expect(pi.service.prompt).toHaveBeenNthCalledWith(2, expect.stringContaining("Caption:\nCheck this file"));
   });
 
+  it("sanitizes and truncates upload path segments before saving", async () => {
+    const longSessionId = `session/${"x".repeat(160)}`;
+    const longFileName = `${"unsafe/".repeat(8)}${"a".repeat(260)}.pdf`;
+    const { bot, pi, api } = setupBot({
+      piSessionOverrides: {
+        getInfo: vi.fn().mockReturnValue({
+          sessionId: longSessionId,
+          sessionFile: "/tmp/test.jsonl",
+          workspace: "/workspace",
+          model: "anthropic/claude-sonnet-4-5",
+        }),
+      },
+    });
+
+    api.getFile.mockResolvedValue({
+      file_id: "document-long-id",
+      file_path: `docs/${"b".repeat(260)}.pdf`,
+    });
+
+    const promptMock = pi.service.prompt as ReturnType<typeof vi.fn>;
+    promptMock.mockImplementation(async () => {
+      pi.emitTextDelta("Saved");
+      pi.emitAgentEnd();
+    });
+
+    await bot.handleUpdate(createDocumentUpdate({
+      message: {
+        document: {
+          file_id: "document-long-id",
+          file_unique_id: "document-long-unique",
+          file_name: longFileName,
+          mime_type: "application/pdf",
+          file_size: 128,
+        },
+      },
+    }));
+
+    const savedPath = vi.mocked(writeFile).mock.calls[0]?.[0];
+    expect(typeof savedPath).toBe("string");
+    const savedPathText = String(savedPath);
+    const sessionSegment = path.basename(path.dirname(savedPathText));
+    const fileName = path.basename(savedPathText);
+    expect(sessionSegment).toHaveLength(96);
+    expect(fileName.length).toBeLessThanOrEqual(220);
+    expect(fileName).not.toContain("/");
+    expect(fileName).not.toContain("\\");
+    expect(fileName.endsWith(".pdf")).toBe(true);
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining(`Path: ${savedPathText}`));
+  });
+
   it("blocks attachment messages while processing and reports upload failures", async () => {
     let resolvePrompt!: () => void;
     const busy = setupBot({

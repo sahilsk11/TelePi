@@ -36,6 +36,10 @@ export function getDefaultTelePiUploadsDir(homeDirectory: string = getHomeDirect
   return path.join(homeDirectory, DEFAULT_UPLOADS_DIRNAME);
 }
 
+export function getDefaultChatSessionStorePath(homeDirectory: string = getHomeDirectory()): string {
+  return path.join(homeDirectory, DEFAULT_CONFIG_DIRNAME, "chat-sessions.json");
+}
+
 /**
  * Returns the default systemd user directory path.
  * Typically ~/.config/systemd/user on Linux.

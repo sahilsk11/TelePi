@@ -69,6 +69,10 @@ import { truncateText, type TreeFilterMode } from "./tree.js";
 const EDIT_DEBOUNCE_MS = 1500;
 const TYPING_INTERVAL_MS = 4500;
 const EXTENSION_UI_TIMEOUT_MS = 60_000;
+const MAX_UPLOAD_SESSION_SEGMENT_LENGTH = 96;
+const MAX_UPLOAD_BASE_NAME_LENGTH = 180;
+const MAX_UPLOAD_FILE_NAME_LENGTH = 220;
+const MAX_UPLOAD_EXTENSION_LENGTH = 32;
 type TelegramChatId = number | string;
 type ContextKey = string;
 
@@ -97,22 +101,41 @@ function selectPhoto(
   return selected;
 }
 
-function sanitizePathSegment(value: string, fallback: string): string {
+function truncatePathSegment(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return value.slice(0, maxLength).replace(/[._-]+$/g, "");
+}
+
+function sanitizePathSegment(value: string, fallback: string, maxLength: number): string {
   const sanitized = value
     .trim()
     .replace(/[/\\]+/g, "-")
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return sanitized || fallback;
+  return truncatePathSegment(sanitized || fallback, maxLength) || fallback;
 }
 
-function ensureFileNameExtension(fileName: string, filePath: string): string {
-  if (path.extname(fileName)) {
+function buildUploadFileName(messageId: number, baseName: string, filePath: string): string {
+  const rawExtension = path.extname(baseName) || path.extname(filePath);
+  const extension = rawExtension
+    .replace(/[^a-zA-Z0-9.]/g, "")
+    .slice(0, MAX_UPLOAD_EXTENSION_LENGTH);
+  const prefix = `${messageId}-`;
+  const maxBaseLength = Math.max(1, MAX_UPLOAD_FILE_NAME_LENGTH - prefix.length - extension.length);
+  const baseWithoutExtension = extension && baseName.toLowerCase().endsWith(extension.toLowerCase())
+    ? baseName.slice(0, -extension.length)
+    : baseName;
+  const truncatedBase = truncatePathSegment(baseWithoutExtension, maxBaseLength) || "file";
+  const fileName = `${prefix}${truncatedBase}${extension}`;
+
+  if (fileName.length <= MAX_UPLOAD_FILE_NAME_LENGTH) {
     return fileName;
   }
 
-  const extension = path.extname(filePath);
-  return extension ? `${fileName}${extension}` : fileName;
+  return fileName.slice(0, MAX_UPLOAD_FILE_NAME_LENGTH);
 }
 
 function collectTelegramAttachment(message: Context["message"]): TelegramAttachment | undefined {
@@ -1271,15 +1294,16 @@ export function createBot(config: TelePiConfig, sessionRegistry: PiSessionRegist
       }
 
       const info = piSession.getInfo();
-      const sessionSegment = sanitizePathSegment(info.sessionId, "session");
+      const sessionSegment = sanitizePathSegment(info.sessionId, "session", MAX_UPLOAD_SESSION_SEGMENT_LENGTH);
       const uploadDir = path.join(config.uploadsDir, sessionSegment);
       const file = await ctx.api.getFile(attachment.fileId);
       const fallbackFileName = attachment.fileName ?? `${attachment.kind}${path.extname(file.file_path ?? "")}`;
       const baseName = sanitizePathSegment(
         fallbackFileName,
         attachment.kind,
+        MAX_UPLOAD_BASE_NAME_LENGTH,
       );
-      const fileName = `${ctx.message.message_id}-${ensureFileNameExtension(baseName, file.file_path ?? "")}`;
+      const fileName = buildUploadFileName(ctx.message.message_id, baseName, file.file_path ?? "");
       const savedPath = await downloadTelegramFile(ctx.api, config.telegramBotToken, attachment.fileId, {
         destinationDir: uploadDir,
         fileName,

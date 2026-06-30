@@ -20,6 +20,7 @@ export type TextOptions = {
 };
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
+const MAX_UPLOAD_FILE_NAME_LENGTH = 220;
 
 export function getTelegramTarget(ctx: Context): PiSessionContext | undefined {
   const chatId = ctx.chat?.id;
@@ -161,7 +162,23 @@ export async function downloadTelegramFile(
   const buffer = Buffer.from(await response.arrayBuffer());
   if (options.destinationDir) {
     await mkdir(options.destinationDir, { recursive: true });
-    const destinationPath = path.join(options.destinationDir, options.fileName || path.basename(file.file_path));
+    const fileName = options.fileName || path.basename(file.file_path);
+    if (
+      fileName.length > MAX_UPLOAD_FILE_NAME_LENGTH ||
+      fileName !== path.basename(fileName) ||
+      /[/\\]/.test(fileName) ||
+      fileName === "." ||
+      fileName === ".."
+    ) {
+      throw new Error("Invalid upload file name");
+    }
+
+    const resolvedDestinationDir = path.resolve(options.destinationDir);
+    const destinationPath = path.resolve(resolvedDestinationDir, fileName);
+    if (!destinationPath.startsWith(`${resolvedDestinationDir}${path.sep}`)) {
+      throw new Error("Invalid upload destination path");
+    }
+
     await writeFile(destinationPath, buffer);
     return destinationPath;
   }
