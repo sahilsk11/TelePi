@@ -631,6 +631,10 @@ export class PiSessionService {
     return this.currentWorkspace;
   }
 
+  getProfileWorkspace(): string | undefined {
+    return this.config.piProfile?.workspace;
+  }
+
   getInfo(): PiSessionInfo {
     if (!this.handle) {
       return {
