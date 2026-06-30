@@ -1,9 +1,8 @@
-import { readFile, unlink } from "node:fs/promises";
+import path from "node:path";
 
 import { InlineKeyboard, Bot, type Context } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type { SlashCommandInfo } from "@mariozechner/pi-coding-agent";
-import type { ImageContent } from "@mariozechner/pi-ai";
 
 import type { TelePiConfig } from "./config.js";
 import { formatError } from "./errors.js";
@@ -66,32 +65,28 @@ import {
   type PiSessionService,
 } from "./pi-session.js";
 import { truncateText, type TreeFilterMode } from "./tree.js";
-import { getVoiceBackendStatus, transcribeAudio } from "./voice.js";
 
 const EDIT_DEBOUNCE_MS = 1500;
 const TYPING_INTERVAL_MS = 4500;
 const EXTENSION_UI_TIMEOUT_MS = 60_000;
-const DEFAULT_IMAGE_PROMPT = "Please analyze this image.";
-
-const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-  ".bmp": "image/bmp",
-  ".tiff": "image/tiff",
-  ".tif": "image/tiff",
-  ".heic": "image/heic",
-  ".heif": "image/heif",
-};
-
+const MAX_UPLOAD_SESSION_SEGMENT_LENGTH = 96;
+const MAX_UPLOAD_BASE_NAME_LENGTH = 180;
+const MAX_UPLOAD_FILE_NAME_LENGTH = 220;
+const MAX_UPLOAD_EXTENSION_LENGTH = 32;
 type TelegramChatId = number | string;
 type ContextKey = string;
 
-function selectPhotoFileId(
-  photos: Array<{ file_id: string; file_size?: number }> | undefined,
-): string | undefined {
+type TelegramAttachment = {
+  fileId: string;
+  kind: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+};
+
+function selectPhoto(
+  photos: Array<{ file_id: string; file_size?: number; width?: number; height?: number }> | undefined,
+): { file_id: string; file_size?: number; width?: number; height?: number } | undefined {
   if (!photos || photos.length === 0) {
     return undefined;
   }
@@ -103,18 +98,115 @@ function selectPhotoFileId(
     }
   }
 
-  return selected?.file_id;
+  return selected;
 }
 
-function resolveImageMimeType(filePath: string, explicitMimeType?: string): string {
-  const normalizedMimeType = explicitMimeType?.trim().toLowerCase();
-  if (normalizedMimeType?.startsWith("image/")) {
-    return normalizedMimeType;
+function truncatePathSegment(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
   }
 
-  const extensionIndex = filePath.lastIndexOf(".");
-  const extension = extensionIndex >= 0 ? filePath.slice(extensionIndex).toLowerCase() : "";
-  return IMAGE_MIME_BY_EXTENSION[extension] ?? "image/jpeg";
+  return value.slice(0, maxLength).replace(/[._-]+$/g, "");
+}
+
+function sanitizePathSegment(value: string, fallback: string, maxLength: number): string {
+  const sanitized = value
+    .trim()
+    .replace(/[/\\]+/g, "-")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return truncatePathSegment(sanitized || fallback, maxLength) || fallback;
+}
+
+function buildUploadFileName(messageId: number, baseName: string, filePath: string): string {
+  const rawExtension = path.extname(baseName) || path.extname(filePath);
+  const extension = rawExtension
+    .replace(/[^a-zA-Z0-9.]/g, "")
+    .slice(0, MAX_UPLOAD_EXTENSION_LENGTH);
+  const prefix = `${messageId}-`;
+  const maxBaseLength = Math.max(1, MAX_UPLOAD_FILE_NAME_LENGTH - prefix.length - extension.length);
+  const baseWithoutExtension = extension && baseName.toLowerCase().endsWith(extension.toLowerCase())
+    ? baseName.slice(0, -extension.length)
+    : baseName;
+  const truncatedBase = truncatePathSegment(baseWithoutExtension, maxBaseLength) || "file";
+  const fileName = `${prefix}${truncatedBase}${extension}`;
+
+  if (fileName.length <= MAX_UPLOAD_FILE_NAME_LENGTH) {
+    return fileName;
+  }
+
+  return fileName.slice(0, MAX_UPLOAD_FILE_NAME_LENGTH);
+}
+
+function collectTelegramAttachment(message: Context["message"]): TelegramAttachment | undefined {
+  const rawMessage = message as any;
+  const photo = selectPhoto(rawMessage?.photo);
+  if (photo) {
+    return {
+      fileId: photo.file_id,
+      kind: "photo",
+      fileName: "photo.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: photo.file_size,
+    };
+  }
+
+  const candidates: Array<[string, any]> = [
+    ["document", rawMessage?.document],
+    ["voice", rawMessage?.voice],
+    ["audio", rawMessage?.audio],
+    ["video", rawMessage?.video],
+    ["video_note", rawMessage?.video_note],
+    ["animation", rawMessage?.animation],
+    ["sticker", rawMessage?.sticker],
+  ];
+
+  for (const [kind, file] of candidates) {
+    if (!file?.file_id) {
+      continue;
+    }
+
+    return {
+      fileId: file.file_id,
+      kind,
+      fileName: typeof file.file_name === "string" ? file.file_name : undefined,
+      mimeType: typeof file.mime_type === "string" ? file.mime_type : undefined,
+      sizeBytes: typeof file.file_size === "number" ? file.file_size : undefined,
+    };
+  }
+
+  return undefined;
+}
+
+function buildUploadPrompt(attachment: {
+  savedPath: string;
+  kind: string;
+  fileName: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  caption?: string;
+}): string {
+  const lines = [
+    "User uploaded a file.",
+    "",
+    `Path: ${attachment.savedPath}`,
+    `Name: ${attachment.fileName}`,
+    `Telegram type: ${attachment.kind}`,
+  ];
+
+  if (attachment.mimeType) {
+    lines.push(`MIME type: ${attachment.mimeType}`);
+  }
+  if (attachment.sizeBytes !== undefined) {
+    lines.push(`Size: ${attachment.sizeBytes} bytes`);
+  }
+
+  const caption = attachment.caption?.trim();
+  if (caption) {
+    lines.push("", "Caption:", caption);
+  }
+
+  return lines.join("\n");
 }
 
 export function createBot(config: TelePiConfig, sessionRegistry: PiSessionRegistry): Bot<Context> {
@@ -499,7 +591,6 @@ export function createBot(config: TelePiConfig, sessionRegistry: PiSessionRegist
     handleUserPrompt,
     getLastPrompt: (target) => chatState.getLastPrompt(target),
     extensionDialogs,
-    getVoiceBackendStatus,
     safeReply,
   });
   const {
@@ -1167,7 +1258,16 @@ export function createBot(config: TelePiConfig, sessionRegistry: PiSessionRegist
     await handleUserPrompt(ctx, target, userText);
   });
 
-  bot.on(["message:photo", "message:document"], async (ctx) => {
+  bot.on([
+    "message:photo",
+    "message:document",
+    "message:voice",
+    "message:audio",
+    "message:video",
+    "message:video_note",
+    "message:animation",
+    "message:sticker",
+  ], async (ctx) => {
     const target = getTelegramTarget(ctx);
     if (!target) {
       return;
@@ -1178,107 +1278,56 @@ export function createBot(config: TelePiConfig, sessionRegistry: PiSessionRegist
       return;
     }
 
-    const photoFileId = selectPhotoFileId(ctx.message.photo as Array<{ file_id: string; file_size?: number }> | undefined);
-    const documentMimeType = ctx.message.document?.mime_type;
-    const isImageDocument = documentMimeType?.toLowerCase().startsWith("image/") ?? false;
-    const documentFileId = isImageDocument ? ctx.message.document?.file_id : undefined;
-    const fileId = photoFileId ?? documentFileId;
-    if (!fileId) {
+    const attachment = collectTelegramAttachment(ctx.message);
+    if (!attachment) {
       return;
     }
 
     chatState.beginTranscribing(target);
-    let tempFilePath: string | undefined;
     let promptText: string | undefined;
-    let images: ImageContent[] | undefined;
 
     try {
       await sendChatAction(ctx.api, target, "typing");
-      tempFilePath = await downloadTelegramFile(ctx.api, config.telegramBotToken, fileId, {
-        fileKind: "image file",
-        tempFilePrefix: "telepi-image",
-      });
-
-      const imageBytes = await readFile(tempFilePath);
-      const imageMimeType = resolveImageMimeType(tempFilePath, documentMimeType);
-      promptText = ctx.message.caption?.trim() || DEFAULT_IMAGE_PROMPT;
-      const preview = truncateText(promptText.replace(/\s+/g, " "), 240);
-      images = [{
-        type: "image",
-        data: imageBytes.toString("base64"),
-        mimeType: imageMimeType,
-      }];
-
-      await safeReply(
-        ctx,
-        `🖼️ ${escapeHTML(preview)}`,
-        { fallbackText: `🖼️ ${preview}` },
-        target,
-      );
-    } catch (error) {
-      const failure = renderPrefixedError("Image handling failed", error, true);
-      await safeReply(ctx, failure.text, {
-        fallbackText: failure.fallbackText,
-        parseMode: failure.parseMode,
-      }, target);
-      return;
-    } finally {
-      chatState.endTranscribing(target);
-      if (tempFilePath) {
-        await unlink(tempFilePath).catch(() => {});
-      }
-    }
-
-    if (!promptText || !images) {
-      return;
-    }
-
-    await handleUserPrompt(ctx, target, promptText, undefined, images);
-  });
-
-  bot.on(["message:voice", "message:audio"], async (ctx) => {
-    const target = getTelegramTarget(ctx);
-    if (!target) {
-      return;
-    }
-
-    const contextKey = getContextKey(target);
-    if (isBusy(target)) {
-      await sendBusyReply(ctx);
-      return;
-    }
-
-    const fileId = ctx.message.voice?.file_id ?? ctx.message.audio?.file_id;
-    if (!fileId) {
-      return;
-    }
-
-    chatState.beginTranscribing(target);
-    let tempFilePath: string | undefined;
-    let transcript: string | undefined;
-
-    try {
-      await sendChatAction(ctx.api, target, "typing");
-      tempFilePath = await downloadTelegramFile(ctx.api, config.telegramBotToken, fileId);
-
-      const result = await transcribeAudio(tempFilePath);
-      transcript = result.text.trim();
-      if (!transcript) {
-        await safeReply(ctx, escapeHTML("Transcription was empty. Please try again or send text instead."), {
-          fallbackText: "Transcription was empty. Please try again or send text instead.",
-        }, target);
+      const piSession = await ensureActiveSession(ctx, target);
+      if (!piSession) {
         return;
       }
 
-      const preview = truncateText(transcript.replace(/\s+/g, " "), 240);
+      const info = piSession.getInfo();
+      const sessionSegment = sanitizePathSegment(info.sessionId, "session", MAX_UPLOAD_SESSION_SEGMENT_LENGTH);
+      const uploadDir = path.join(config.uploadsDir, sessionSegment);
+      const file = await ctx.api.getFile(attachment.fileId);
+      const fallbackFileName = attachment.fileName ?? `${attachment.kind}${path.extname(file.file_path ?? "")}`;
+      const baseName = sanitizePathSegment(
+        fallbackFileName,
+        attachment.kind,
+        MAX_UPLOAD_BASE_NAME_LENGTH,
+      );
+      const fileName = buildUploadFileName(ctx.message.message_id, baseName, file.file_path ?? "");
+      const savedPath = await downloadTelegramFile(ctx.api, config.telegramBotToken, attachment.fileId, {
+        destinationDir: uploadDir,
+        fileName,
+        fileKind: "uploaded file",
+      });
+
+      promptText = buildUploadPrompt({
+        savedPath,
+        kind: attachment.kind,
+        fileName,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        caption: ctx.message.caption?.trim(),
+      });
+
+      const preview = truncateText(`Saved ${fileName}`, 240);
       await safeReply(
         ctx,
-        `🎤 ${escapeHTML(preview)} <i>(via ${escapeHTML(result.backend)})</i>`,
-        { fallbackText: `🎤 ${preview} (via ${result.backend})` },
+        `📎 ${escapeHTML(preview)}`,
+        { fallbackText: `📎 ${preview}` },
         target,
       );
     } catch (error) {
-      const failure = renderPrefixedError("Transcription failed", error, true);
+      const failure = renderPrefixedError("Upload handling failed", error, true);
       await safeReply(ctx, failure.text, {
         fallbackText: failure.fallbackText,
         parseMode: failure.parseMode,
@@ -1286,16 +1335,13 @@ export function createBot(config: TelePiConfig, sessionRegistry: PiSessionRegist
       return;
     } finally {
       chatState.endTranscribing(target);
-      if (tempFilePath) {
-        await unlink(tempFilePath).catch(() => {});
-      }
     }
 
-    if (!transcript) {
+    if (!promptText) {
       return;
     }
 
-    await handleUserPrompt(ctx, target, transcript);
+    await handleUserPrompt(ctx, target, promptText);
   });
 
   bot.catch((error) => {

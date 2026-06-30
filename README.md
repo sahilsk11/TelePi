@@ -1,14 +1,14 @@
 # TelePi
 
-**Run your Pi coding agent from Telegram: voice prompts, screenshots, session handoff, and terminal handback.**
+**Run your Pi coding agent from Telegram: text prompts, file uploads, session handoff, and terminal handback.**
 
 TelePi is a Telegram bridge for the [Pi coding agent](https://github.com/badlogic/pi-mono). It runs locally on your machine, opens real Pi sessions in your repositories, lets you continue from your phone, and hands the exact same session back to the terminal when you return.
 
 **Who this is for:** developers already using Pi who want a safe mobile control surface for coding-agent work: reply from the train, send a screenshot, dictate a prompt, watch progress, then resume in the CLI without losing context.
 
-Early open-source release: **80+ stars, 13 forks, and hundreds of npm downloads**. Current npm release: `@futurelab-studio/telepi` **v0.4.2**, with macOS `launchd`, Linux `systemd --user`, image prompts, prompt inbox, local/cloud voice transcription, and Pi command bridging. Read the [Futurelab TelePi deep dive](https://futurelab.studio/blog/telepi-telegram-remote-control-for-pi/) for the longer story.
+Early open-source release: **80+ stars, 13 forks, and hundreds of npm downloads**. Current npm release: `@futurelab-studio/telepi` **v0.4.2**, with macOS `launchd`, Linux `systemd --user`, file uploads, prompt inbox, and Pi command bridging. Read the [Futurelab TelePi deep dive](https://futurelab.studio/blog/telepi-telegram-remote-control-for-pi/) for the longer story.
 
-> **Demo placeholder:** GIF coming soon. The core loop is: Pi CLI `/handoff` → Telegram text/voice/image prompt → `/handback` → resume the same Pi session in your terminal.
+> **Demo placeholder:** GIF coming soon. The core loop is: Pi CLI `/handoff` → Telegram prompt or file upload → `/handback` → resume the same Pi session in your terminal.
 
 ## Try it in 5 minutes
 
@@ -29,14 +29,14 @@ telepi status
 
 `telepi setup` asks for your bot token, allowed Telegram user IDs, and default workspace. It installs the local service for your platform and the Pi `/handoff` extension.
 
-**Success checkpoint:** open Telegram and send `/start` to your bot. You should see your workspace/session status and voice backend status. If not, jump to [Troubleshooting activation blockers](#troubleshooting-activation-blockers).
+**Success checkpoint:** open Telegram and send `/start` to your bot. You should see your workspace/session status. If not, jump to [Troubleshooting activation blockers](#troubleshooting-activation-blockers).
 
 ## Your first TelePi session
 
 1. Start or open a Pi session in a repository.
 2. Run `/handoff` from Pi.
 3. Open Telegram and find your bot.
-4. Send a text prompt, voice message, or screenshot/photo.
+4. Send a text prompt or upload a file.
 5. Use `/handback` to resume the same session in your terminal.
 
 ## Security model
@@ -53,8 +53,7 @@ TelePi gives Telegram access to a coding agent, so it is designed to stay privat
 
 - **Bi-directional hand-off**: Move sessions CLI → Telegram (`/handoff`) and back (`/handback`)
 - **Per-chat/topic sessions**: Every Telegram chat or forum topic gets its own Pi session, picker state, and retry history
-- **Voice and image messages**: Send voice/audio for transcription, or photos/image documents as Pi image inputs
-- **Local or cloud transcription**: [Parakeet CoreML](https://github.com/sebastian-software/parakeet-coreml) on Apple Silicon, [Sherpa-ONNX Parakeet](https://k2-fsa.github.io/sherpa/onnx/) for Intel Macs (and as a CPU fallback), or OpenAI Whisper in the cloud
+- **File uploads**: Send photos, documents, voice/audio, videos, animations, or stickers; TelePi saves them and forwards the path to Pi
 - **Session tree navigation**: Browse, branch, and label your Pi session history with `/tree`, `/branch`, `/label`
 - **Cross-workspace sessions**: Browse and switch between sessions from any project
 - **Model switching**: Change AI models on the fly via `/model`
@@ -139,9 +138,9 @@ Start Pi locally once and complete authentication before using TelePi. TelePi ex
 
 Run `telepi status`. On macOS, restart the LaunchAgent with `launchctl kickstart -k gui/$UID/com.telepi`. On Linux, run `systemctl --user status telepi.service` and `systemctl --user restart telepi.service`; on headless systems you may also need `loginctl enable-linger "$USER"`.
 
-### Voice transcription not working
+### File uploads not working
 
-Send `/start` and check the voice backend status. Local transcription needs `ffmpeg` plus either `parakeet-coreml` on Apple Silicon or `sherpa-onnx-node` with `SHERPA_ONNX_MODEL_DIR` for Intel/CPU fallback. Cloud transcription needs `OPENAI_API_KEY` in `~/.config/telepi/config.env`. See [Voice and Image Messages](#voice-and-image-messages) for setup details.
+Check that TelePi can write to `TELEPI_UPLOADS_DIR`, or to the default `~/.telepi/uploads` when the variable is unset.
 
 ## Development from Source
 
@@ -185,7 +184,7 @@ node dist/cli.js start
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Welcome message, session info, and voice backend status |
+| `/start` | Welcome message and session info |
 | `/help` | Quick command reference and usage tips |
 | `/commands` | Open a paginated picker for TelePi commands plus discovered Pi prompt templates, skills, and extension commands |
 | `/new` | Create a fresh session (shows workspace picker if multiple known) |
@@ -217,91 +216,24 @@ TELEPI_PROMPT_INBOX_INTERVAL_MS=60000  # optional; default 60s, minimum 1s
 
 When enabled, TelePi polls the directory, processes one `.txt` file at a time, sends its trimmed contents to the root chat for the first `TELEGRAM_ALLOWED_USER_IDS` entry, and deletes the file after accepting it. If that chat is already busy, files stay queued for the next poll. Empty `.txt` files are deleted to avoid loops; subdirectories and non-`.txt` files are ignored.
 
-## Voice and Image Messages
-
-Send any Telegram **voice message** or **audio file** and TelePi will transcribe it and feed the transcript straight into Pi as a text prompt.
+## File Uploads
 
 ```
-[you send a voice message]
-🎤 "How does the session hand-off work?" (via parakeet)
+[you send a file with caption "check this"]
+📎 Saved 42-report.pdf
 
 [Pi responds normally]
 ```
 
-TelePi supports three transcription backends and picks the best one automatically:
+Send any Telegram file-bearing message — photo, document, voice, audio, video, animation, sticker, etc. — and TelePi saves it under the configured uploads directory, then sends Pi a normal user prompt with the saved path, Telegram metadata, and caption when present. TelePi does not interpret the file type; your Pi session, tools, and prompts decide what to do with the saved file.
 
-| Backend | How to enable | Cost | Privacy |
-|---------|---------------|------|---------|
-| **Parakeet CoreML** (local) | `npm install parakeet-coreml` + `brew install ffmpeg` | Free | On-device |
-| **Sherpa-ONNX Parakeet** (local, Intel Mac path) | `npm install sherpa-onnx-node` + download model + set `SHERPA_ONNX_MODEL_DIR` | Free | On-device |
-| **OpenAI Whisper** (cloud) | `OPENAI_API_KEY=sk-...` in your TelePi config file | ~$0.006/min | Cloud |
-
-TelePi tries backends in this order:
-
-1. **Parakeet CoreML** — best local path on Apple Silicon
-2. **Sherpa-ONNX Parakeet** — the local/offline path for Intel Macs, where `parakeet-coreml` does not run (and a CPU fallback on Apple Silicon)
-3. **OpenAI Whisper** — cloud fallback
-
-The `/start` command shows which backends are currently active.
-
-Send a Telegram **photo** or **image document** to pass it to Pi as image input. Captions become the prompt; without a caption TelePi asks Pi to analyze the image.
-
-### Installing Parakeet CoreML (local transcription on Apple Silicon)
-
-Parakeet CoreML is an optional dependency (~1.5 GB download, macOS only with Apple Silicon):
+By default uploads are stored under `~/.telepi/uploads/<session-id>/`. Override this with:
 
 ```bash
-npm install parakeet-coreml
-brew install ffmpeg   # required for audio decoding
+TELEPI_UPLOADS_DIR=/absolute/path/to/telepi-uploads
 ```
 
-On first use the CoreML model is downloaded automatically. Subsequent calls use the cached model.
-
-### Installing Sherpa-ONNX Parakeet (local transcription for Intel Macs)
-
-This is the recommended local transcription path on Intel Macs, since `parakeet-coreml` is Apple-Silicon-only. It can also be used on Apple Silicon, but TelePi will still prefer Parakeet CoreML there when available.
-
-Install the optional Node binding:
-
-```bash
-npm install sherpa-onnx-node
-brew install ffmpeg   # required for audio decoding
-```
-
-Download and extract the Parakeet model layout TelePi expects (`encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`). The v3 multilingual model below is the intended Intel Mac setup:
-
-```bash
-curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
-tar xvf sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
-```
-
-Point TelePi at the extracted directory:
-
-```bash
-export SHERPA_ONNX_MODEL_DIR="$(pwd)/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
-```
-
-If `SHERPA_ONNX_MODEL_DIR` is set, TelePi treats missing model files or a missing `sherpa-onnx-node` package as configuration errors and will not silently fall through to OpenAI.
-
-If the native module cannot find its shared libraries on macOS, start TelePi with:
-
-```bash
-export DYLD_LIBRARY_PATH="$(pwd)/node_modules/sherpa-onnx-darwin-$(uname -m | sed 's/x86_64/x64/;s/arm64/arm64/'):${DYLD_LIBRARY_PATH}"
-```
-
-For the exact family of Sherpa Parakeet models TelePi currently supports, plus platform notes, see:
-
-- https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html
-
-### Using OpenAI Whisper (cloud transcription)
-
-Add your key to your TelePi config file (`~/.config/telepi/config.env` in installed mode, or `.env` in a source checkout):
-
-```
-OPENAI_API_KEY=sk-...
-```
-
-No additional packages are required. Supports the same audio formats Telegram delivers (Ogg Opus, MP3, M4A, WAV, etc.).
+Audio and voice messages are saved the same way as other files. If you want automatic transcription, configure that behavior in your Pi prompts or tools using the saved file path.
 
 ## Session Tree Navigation
 
@@ -607,7 +539,7 @@ The compose file:
 - The `/handoff` extension only shuts down Pi CLI if TelePi launches or restarts successfully
 - URL sanitization blocks `javascript:` and other unsafe protocols in formatted output
 - Shell commands in `/handback` use `spawnSync` (no shell interpretation) for clipboard copy
-- Voice files are downloaded to a temporary directory and deleted immediately after transcription
+- Telegram uploads are saved under `~/.telepi/uploads` by default; set `TELEPI_UPLOADS_DIR` to choose another location
 
 ## Architecture
 

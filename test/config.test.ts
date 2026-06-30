@@ -29,6 +29,7 @@ describe("loadConfig", () => {
     delete process.env.TOOL_VERBOSITY;
     delete process.env.TELEPI_CONFIG;
     delete process.env.TELEPI_WORKSPACE;
+    delete process.env.TELEPI_UPLOADS_DIR;
     delete process.env.TELEPI_PROMPT_INBOX_DIR;
     delete process.env.TELEPI_PROMPT_INBOX_INTERVAL_MS;
     delete process.env.container;
@@ -58,6 +59,7 @@ describe("loadConfig", () => {
       piSessionPath: "/tmp/session.jsonl",
       piModel: "anthropic/claude-sonnet-4-5",
       toolVerbosity: "all",
+      uploadsDir: path.join(homeDir, ".telepi", "uploads"),
       promptInboxDir: undefined,
       promptInboxIntervalMs: 60000,
     });
@@ -273,6 +275,16 @@ describe("loadConfig", () => {
 
     expect(config.promptInboxDir).toBe(path.resolve(cwdDir, "prompt-inbox"));
   });
+  it("defaults uploads to ~/.telepi/uploads and allows TELEPI_UPLOADS_DIR override", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+
+    expect(loadConfig().uploadsDir).toBe(path.join(homeDir, ".telepi", "uploads"));
+
+    process.env.TELEPI_UPLOADS_DIR = " ./uploads ";
+    expect(loadConfig().uploadsDir).toBe(path.resolve(cwdDir, "uploads"));
+  });
+
 
   it("parses TELEPI_PROMPT_INBOX_INTERVAL_MS when valid", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);

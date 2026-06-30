@@ -1,13 +1,39 @@
 import { InlineKeyboard } from "grammy";
+import { mkdir, writeFile } from "node:fs/promises";
 
 import {
+  downloadTelegramFile,
   getTelegramTarget,
   safeEditMessage,
   safeReply,
   sendTextMessage,
 } from "../../src/bot/telegram-transport.js";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    writeFile: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 describe("bot telegram transport helpers", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.mocked(mkdir).mockResolvedValue(undefined);
+    vi.mocked(writeFile).mockResolvedValue(undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
+      }),
+    );
+  });
+
   it("derives the Telegram target from messages and callback queries", () => {
     expect(
       getTelegramTarget({
@@ -112,5 +138,48 @@ describe("bot telegram transport helpers", () => {
     expect(bot.api.editMessageText).toHaveBeenNthCalledWith(3, 123, 2, "plain", {
       reply_markup: undefined,
     });
+  });
+
+  it("downloads durable uploads only to safe destination file names", async () => {
+    const api = {
+      getFile: vi.fn().mockResolvedValue({
+        file_path: "docs/report.pdf",
+      }),
+    };
+
+    await expect(downloadTelegramFile(api as any, "token", "file-id", {
+      destinationDir: "/uploads/session",
+      fileName: "../report.pdf",
+    })).rejects.toThrow("Invalid upload file name");
+
+    await expect(downloadTelegramFile(api as any, "token", "file-id", {
+      destinationDir: "/uploads/session",
+      fileName: "nested\\report.pdf",
+    })).rejects.toThrow("Invalid upload file name");
+
+    await expect(downloadTelegramFile(api as any, "token", "file-id", {
+      destinationDir: "/uploads/session",
+      fileName: `${"a".repeat(221)}.txt`,
+    })).rejects.toThrow("Invalid upload file name");
+
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("enforces the Telegram download size limit before fetching", async () => {
+    const api = {
+      getFile: vi.fn().mockResolvedValue({
+        file_path: "docs/huge.pdf",
+        file_size: 26 * 1024 * 1024,
+      }),
+    };
+
+    await expect(downloadTelegramFile(api as any, "token", "file-id", {
+      destinationDir: "/uploads/session",
+      fileKind: "uploaded file",
+      fileName: "huge.pdf",
+    })).rejects.toThrow("uploaded file too large");
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
   });
 });

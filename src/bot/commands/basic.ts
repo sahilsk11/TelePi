@@ -3,7 +3,7 @@ import type { SlashCommandInfo } from "@mariozechner/pi-coding-agent";
 
 import { escapeHTML } from "../../format.js";
 import type { PiSessionContext, PiSessionRegistry, PiSessionService } from "../../pi-session.js";
-import { renderFailedText, renderHelpHTML, renderHelpPlain, renderPrefixedError, renderSessionInfoHTML, renderSessionInfoPlain, renderVoiceSupportHTML, renderVoiceSupportPlain } from "../message-rendering.js";
+import { renderFailedText, renderHelpHTML, renderHelpPlain, renderPrefixedError, renderSessionInfoHTML, renderSessionInfoPlain } from "../message-rendering.js";
 import type { TextOptions } from "../telegram-transport.js";
 
 export function createBasicCommandHandlers(deps: {
@@ -20,7 +20,6 @@ export function createBasicCommandHandlers(deps: {
   ) => Promise<boolean>;
   getLastPrompt: (target: PiSessionContext) => string | undefined;
   extensionDialogs: { cancelPending: (target: PiSessionContext) => Promise<boolean> };
-  getVoiceBackendStatus: () => Promise<{ backends: string[]; warning?: string }>;
   safeReply: (ctx: Context, text: string, options?: TextOptions, target?: PiSessionContext) => Promise<void>;
 }) {
   const {
@@ -32,7 +31,6 @@ export function createBasicCommandHandlers(deps: {
     handleUserPrompt,
     getLastPrompt,
     extensionDialogs,
-    getVoiceBackendStatus,
     safeReply,
   } = deps;
 
@@ -40,22 +38,13 @@ export function createBasicCommandHandlers(deps: {
     const piSession = await getOrCreateSession(target);
     await refreshChatScopedCommands(target, piSession);
     const info = piSession.getInfo();
-    let voiceStatus: { backends: string[]; warning?: string } = { backends: [] };
-    try {
-      voiceStatus = (await getVoiceBackendStatus()) ?? { backends: [] };
-    } catch {
-      // Keep /start working even if backend probing fails.
-    }
-    const voiceInfoPlain = renderVoiceSupportPlain(voiceStatus.backends, voiceStatus.warning);
-    const voiceInfoHTML = renderVoiceSupportHTML(voiceStatus.backends, voiceStatus.warning);
     const plainText = [
       "TelePi is ready.",
       "",
       "Each Telegram chat/topic gets its own Pi session.",
       "Send any text message to continue the current Pi session from Telegram.",
-      "Send a voice message or audio file to transcribe it into a Pi prompt.",
+      "Send a file upload to save it and forward its path to Pi.",
       "Use /help to see all commands. Use /retry to resend the last prompt in this chat/topic.",
-      voiceInfoPlain,
       "",
       renderSessionInfoPlain(info),
     ].join("\n");
@@ -64,9 +53,8 @@ export function createBasicCommandHandlers(deps: {
       "",
       "Each Telegram chat/topic gets its own Pi session.",
       "Send any text message to continue the current Pi session from Telegram.",
-      "Send a voice message or audio file to transcribe it into a Pi prompt.",
+      "Send a file upload to save it and forward its path to Pi.",
       "Use <code>/help</code> to see all commands. Use <code>/retry</code> to resend the last prompt in this chat/topic.",
-      voiceInfoHTML,
       "",
       renderSessionInfoHTML(info),
     ].join("\n");
