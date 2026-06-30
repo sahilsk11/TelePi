@@ -26,10 +26,13 @@ describe("loadConfig", () => {
     delete process.env.TELEGRAM_ALLOWED_USER_IDS;
     delete process.env.PI_MODEL;
     delete process.env.PI_SESSION_PATH;
+    delete process.env.PI_CODING_AGENT_DIR;
     delete process.env.TOOL_VERBOSITY;
     delete process.env.TELEPI_CONFIG;
     delete process.env.TELEPI_WORKSPACE;
     delete process.env.TELEPI_UPLOADS_DIR;
+    delete process.env.TELEPI_PI_PROFILE;
+    delete process.env.TELEPI_PI_TOOLS;
     delete process.env.TELEPI_PROMPT_INBOX_DIR;
     delete process.env.TELEPI_PROMPT_INBOX_INTERVAL_MS;
     delete process.env.container;
@@ -58,6 +61,7 @@ describe("loadConfig", () => {
       workspace: cwdDir,
       piSessionPath: "/tmp/session.jsonl",
       piModel: "anthropic/claude-sonnet-4-5",
+      piTools: undefined,
       toolVerbosity: "all",
       uploadsDir: path.join(homeDir, ".telepi", "uploads"),
       promptInboxDir: undefined,
@@ -106,6 +110,46 @@ describe("loadConfig", () => {
 
     expect(config.piModel).toBeUndefined();
     expect(config.piSessionPath).toBeUndefined();
+  });
+
+  it("loads Pi tools from PI_CODING_AGENT_DIR/profile.json", () => {
+    const agentDir = path.join(tempDir, "mark-2", "config", "pi-agent");
+    writeFile(path.join(agentDir, "profile.json"), JSON.stringify({
+      tools: ["read", "bash", "read", "hindsight_recall"],
+    }));
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    const config = loadConfig();
+
+    expect(config.piTools).toEqual(["read", "bash", "hindsight_recall"]);
+  });
+
+  it("uses TELEPI_PI_PROFILE when set", () => {
+    const profilePath = path.join(tempDir, "profiles", "assistant.json");
+    writeFile(profilePath, JSON.stringify({ tools: ["read", "mcp"] }));
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.PI_CODING_AGENT_DIR = path.join(tempDir, "empty-agent");
+    process.env.TELEPI_PI_PROFILE = profilePath;
+
+    const config = loadConfig();
+
+    expect(config.piTools).toEqual(["read", "mcp"]);
+  });
+
+  it("lets TELEPI_PI_TOOLS override profile tools", () => {
+    const agentDir = path.join(tempDir, "agent");
+    writeFile(path.join(agentDir, "profile.json"), JSON.stringify({ tools: ["read", "bash"] }));
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.TELEPI_PI_TOOLS = " edit, write, edit ";
+
+    const config = loadConfig();
+
+    expect(config.piTools).toEqual(["edit", "write"]);
   });
 
   it.each(["all", "summary", "errors-only", "none"] as const)(
@@ -275,6 +319,7 @@ describe("loadConfig", () => {
 
     expect(config.promptInboxDir).toBe(path.resolve(cwdDir, "prompt-inbox"));
   });
+
   it("defaults uploads to ~/.telepi/uploads and allows TELEPI_UPLOADS_DIR override", () => {
     process.env.TELEGRAM_BOT_TOKEN = "bot-token";
     process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
@@ -284,7 +329,6 @@ describe("loadConfig", () => {
     process.env.TELEPI_UPLOADS_DIR = " ./uploads ";
     expect(loadConfig().uploadsDir).toBe(path.resolve(cwdDir, "uploads"));
   });
-
 
   it("parses TELEPI_PROMPT_INBOX_INTERVAL_MS when valid", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -333,4 +377,9 @@ describe("loadConfig", () => {
 function writeEnvFile(filePath: string, lines: string[]): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${lines.join("\n")}\n`);
+}
+
+function writeFile(filePath: string, contents: string): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, contents);
 }

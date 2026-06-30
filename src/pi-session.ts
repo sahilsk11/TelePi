@@ -506,7 +506,7 @@ async function createPiSessionHandle(
       hasExistingSession,
     });
 
-    const desiredBuiltInToolNames = getDesiredBuiltInToolNames(cwd);
+    const desiredBuiltInToolNames = config.piTools ? [] : getDesiredBuiltInToolNames(cwd);
     const result = await createAgentSessionFromServices({
       services,
       sessionManager: runtimeSessionManager,
@@ -514,8 +514,11 @@ async function createPiSessionHandle(
       model,
       thinkingLevel,
       scopedModels,
+      ...(config.piTools ? { tools: config.piTools } : {}),
     });
-    ensureBuiltInToolActivation(result.session, desiredBuiltInToolNames);
+    if (!config.piTools) {
+      ensureBuiltInToolActivation(result.session, desiredBuiltInToolNames);
+    }
     getSlashCommands = () => result.extensionsResult.runtime.getCommands?.() ?? [];
     patchBashTimeout(result.session);
 
