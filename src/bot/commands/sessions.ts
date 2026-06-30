@@ -147,11 +147,12 @@ export function createSessionCommandHandlers(deps: {
     }
 
     const piSession = await getOrCreateSession(target);
-    const workspaces = await piSession.listWorkspaces();
 
-    if (workspaces.length <= 1) {
+    const createDirectNewSession = async (workspace?: string): Promise<void> => {
       try {
-        const { info, created } = await piSession.newSession();
+        const { info, created } = workspace
+          ? await piSession.newSession(workspace)
+          : await piSession.newSession();
         if (!created) {
           await safeReply(ctx, escapeHTML("New session was cancelled."), {
             fallbackText: "New session was cancelled.",
@@ -173,6 +174,18 @@ export function createSessionCommandHandlers(deps: {
           parseMode: failure.parseMode,
         }, target);
       }
+    };
+
+    const profileWorkspace = piSession.getProfileWorkspace();
+    if (profileWorkspace) {
+      await createDirectNewSession(profileWorkspace);
+      return;
+    }
+
+    const workspaces = await piSession.listWorkspaces();
+
+    if (workspaces.length <= 1) {
+      await createDirectNewSession();
       return;
     }
 

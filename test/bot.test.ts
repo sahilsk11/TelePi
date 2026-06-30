@@ -222,6 +222,7 @@ function createMockPiSession(overrides: Partial<PiSessionService> = {}) {
     isStreaming: vi.fn().mockReturnValue(false),
     hasActiveSession: vi.fn().mockReturnValue(true),
     getCurrentWorkspace: vi.fn().mockReturnValue("/workspace"),
+    getProfileWorkspace: vi.fn().mockReturnValue(undefined),
     abort: vi.fn().mockResolvedValue(undefined),
     newSession: vi.fn().mockResolvedValue({
       info: {
@@ -1407,6 +1408,20 @@ describe("createBot", () => {
     await single.bot.handleUpdate(createTestUpdate({ message: { text: "/new" } }));
     expect(single.pi.service.newSession).toHaveBeenCalledWith();
     expect(single.api.sendMessage.mock.calls[0]?.[1]).toContain("New session created.");
+  });
+
+  it("creates directly in the profile workspace for /new when a profile workspace is configured", async () => {
+    const { bot, pi, api } = setupBot({
+      piSessionOverrides: {
+        getProfileWorkspace: vi.fn().mockReturnValue("/home/sahil/projects/mark-2"),
+      },
+    });
+
+    await bot.handleUpdate(createTestUpdate({ message: { text: "/new" } }));
+
+    expect(pi.service.listWorkspaces).not.toHaveBeenCalled();
+    expect(pi.service.newSession).toHaveBeenCalledWith("/home/sahil/projects/mark-2");
+    expect(api.sendMessage.mock.calls[0]?.[1]).toContain("New session created.");
   });
 
   it("surfaces startup diagnostics after successful direct /new session creation", async () => {
