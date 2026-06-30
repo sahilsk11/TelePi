@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import {
@@ -16,6 +17,7 @@ export interface TelePiConfig {
   workspace: string;
   piSessionPath?: string;
   piModel?: string;
+  piTools?: string[];
   toolVerbosity: ToolVerbosity;
   promptInboxDir?: string;
   promptInboxIntervalMs: number;
@@ -45,6 +47,7 @@ export function loadConfig(): TelePiConfig {
   const workspace = resolveWorkspace();
   const piSessionPath = optionalString(process.env.PI_SESSION_PATH);
   const piModel = optionalString(process.env.PI_MODEL);
+  const piTools = resolvePiTools();
   const toolVerbosity = parseToolVerbosity(optionalString(process.env.TOOL_VERBOSITY));
   const promptInboxDir = resolveOptionalPath(process.env.TELEPI_PROMPT_INBOX_DIR);
   const promptInboxIntervalMs = parsePromptInboxIntervalMs(optionalString(process.env.TELEPI_PROMPT_INBOX_INTERVAL_MS));
@@ -56,6 +59,7 @@ export function loadConfig(): TelePiConfig {
     workspace,
     piSessionPath,
     piModel,
+    piTools,
     toolVerbosity,
     promptInboxDir,
     promptInboxIntervalMs,
@@ -180,6 +184,50 @@ function resolveOptionalPath(value: string | undefined): string | undefined {
   return normalized ? resolvePathFromCwd(normalized) : undefined;
 }
 
+function resolvePiTools(): string[] | undefined {
+  const explicitTools = parsePiTools(optionalString(process.env.TELEPI_PI_TOOLS));
+  if (explicitTools) {
+    return explicitTools;
+  }
+
+  return readPiProfileTools(resolvePiProfilePath());
+}
+
+function resolvePiProfilePath(): string | undefined {
+  const explicitPath = resolveOptionalPath(process.env.TELEPI_PI_PROFILE);
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  const agentDir = optionalString(process.env.PI_CODING_AGENT_DIR);
+  if (!agentDir) {
+    return undefined;
+  }
+
+  return path.join(resolveTildePath(agentDir), "profile.json");
+}
+
+function readPiProfileTools(profilePath: string | undefined): string[] | undefined {
+  if (!profilePath || !existsSync(profilePath)) {
+    return undefined;
+  }
+
+  try {
+    const profile = JSON.parse(readFileSync(profilePath, "utf8")) as { tools?: unknown };
+    if (profile.tools === undefined) {
+      return undefined;
+    }
+    if (!Array.isArray(profile.tools)) {
+      console.warn(`Ignoring ${profilePath}: "tools" must be an array of tool names.`);
+      return undefined;
+    }
+    return normalizeToolNames(profile.tools);
+  } catch (error) {
+    console.warn(`Ignoring ${profilePath}: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
 function parsePromptInboxIntervalMs(raw: string | undefined): number {
   if (!raw) {
     return DEFAULT_PROMPT_INBOX_INTERVAL_MS;
@@ -240,4 +288,34 @@ function parseToolVerbosity(raw: string | undefined): ToolVerbosity {
       );
       return "summary";
   }
+}
+
+function parsePiTools(raw: string | undefined): string[] | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  return normalizeToolNames(raw.split(","));
+}
+
+function normalizeToolNames(values: unknown[]): string[] | undefined {
+  const tools = [
+    ...new Set(
+      values
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ];
+  return tools.length > 0 ? tools : undefined;
+}
+
+function resolveTildePath(value: string): string {
+  if (value === "~") {
+    return homedir();
+  }
+  if (value.startsWith("~/")) {
+    return path.join(homedir(), value.slice(2));
+  }
+  return resolvePathFromCwd(value);
 }
