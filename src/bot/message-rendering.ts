@@ -40,7 +40,7 @@ export function renderHelpPlain(info: PiSessionInfo): string {
     "",
     "Notes:",
     "- Each Telegram chat/topic has its own Pi session and retry history.",
-    "- Voice messages are transcribed and then sent as prompts.",
+    "- File uploads are saved and sent to Pi as paths with metadata.",
     "",
     renderSessionInfoPlain(info),
   ].join("\n");
@@ -67,7 +67,7 @@ export function renderHelpHTML(info: PiSessionInfo): string {
     "",
     "<b>Notes</b>",
     "- Each Telegram chat/topic has its own Pi session and retry history.",
-    "- Voice messages are transcribed and then sent as prompts.",
+    "- File uploads are saved and sent to Pi as paths with metadata.",
     "",
     renderSessionInfoHTML(info),
   ].join("\n");

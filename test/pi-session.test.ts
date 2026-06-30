@@ -454,6 +454,7 @@ describe("PiSessionService", () => {
     piModel: undefined,
     toolVerbosity: "summary",
     promptInboxDir: undefined,
+    uploadsDir: "/tmp/telepi-uploads",
     promptInboxIntervalMs: 60000,
     ...overrides,
   });

@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { vi } from "vitest";
@@ -17,9 +17,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
-    readFile: vi.fn().mockResolvedValue(Buffer.from("image-bytes")),
+    mkdir: vi.fn().mockResolvedValue(undefined),
     writeFile: vi.fn().mockResolvedValue(undefined),
-    unlink: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -106,6 +105,7 @@ function createConfig(overrides: Partial<TelePiConfig> = {}): TelePiConfig {
     piSessionPath: undefined,
     piModel: undefined,
     toolVerbosity: "summary",
+    uploadsDir: "/uploads",
     promptInboxDir: undefined,
     promptInboxIntervalMs: 60000,
     ...overrides,
@@ -761,9 +761,8 @@ describe("createBot", () => {
       backend: "openai",
       durationMs: 500,
     });
-    vi.mocked(readFile).mockResolvedValue(Buffer.from("image-bytes"));
+    vi.mocked(mkdir).mockResolvedValue(undefined);
     vi.mocked(writeFile).mockResolvedValue(undefined);
-    vi.mocked(unlink).mockResolvedValue(undefined);
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -889,7 +888,7 @@ describe("createBot", () => {
     expect(switched.api.sendMessage.mock.calls[0]?.[1]).toContain("Nothing to retry yet");
   });
 
-  it("can retry failed prompts and prompts started from voice transcription", async () => {
+  it("can retry failed prompts and prompts started from uploaded files", async () => {
     const failing = setupBot();
     const failingPrompt = failing.pi.service.prompt as ReturnType<typeof vi.fn>;
     failingPrompt
@@ -912,8 +911,10 @@ describe("createBot", () => {
     await voice.bot.handleUpdate(createVoiceUpdate());
     await voice.bot.handleUpdate(createTestUpdate({ message: { text: "/retry" } }));
 
-    expect(voice.pi.service.prompt).toHaveBeenNthCalledWith(1, "transcribed text");
-    expect(voice.pi.service.prompt).toHaveBeenNthCalledWith(2, "transcribed text");
+    const firstPrompt = (voice.pi.service.prompt as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(firstPrompt).toContain("User uploaded a file.");
+    expect(firstPrompt).toContain("Path: /uploads/test-id/1-voice.ogg");
+    expect(voice.pi.service.prompt).toHaveBeenNthCalledWith(2, firstPrompt);
   });
 
   it("rejects unauthorized message senders", async () => {
@@ -3038,7 +3039,7 @@ describe("createBot", () => {
     await pending;
   });
 
-  it("transcribes voice messages and feeds the transcript into the prompt flow", async () => {
+  it("saves voice messages and feeds the upload path into the prompt flow", async () => {
     const { bot, pi, api } = setupBot();
     const promptMock = pi.service.prompt as ReturnType<typeof vi.fn>;
     promptMock.mockImplementation(async () => {
@@ -3052,15 +3053,16 @@ describe("createBot", () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       "https://api.telegram.org/file/botbot-token/voice/file.ogg",
     );
-    expect(transcribeAudio).toHaveBeenCalledTimes(1);
-    expect(pi.service.prompt).toHaveBeenCalledWith("transcribed text");
-    expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("🎤 transcribed text"))).toBe(true);
+    expect(transcribeAudio).not.toHaveBeenCalled();
+    expect(writeFile).toHaveBeenCalledWith("/uploads/test-id/1-voice.ogg", expect.any(Buffer));
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("User uploaded a file."));
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("Path: /uploads/test-id/1-voice.ogg"));
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("Telegram type: voice"));
+    expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("📎 Saved 1-voice.ogg"))).toBe(true);
     expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("Voice response"))).toBe(true);
-    expect(writeFile).toHaveBeenCalledTimes(1);
-    expect(unlink).toHaveBeenCalledTimes(1);
   });
 
-  it("handles photo messages by sending caption + image input to Pi", async () => {
+  it("handles photo messages by saving the image and sending caption metadata to Pi", async () => {
     const { bot, pi, api } = setupBot();
     api.getFile.mockImplementation(async (fileId: string) => ({
       file_id: fileId,
@@ -3076,22 +3078,18 @@ describe("createBot", () => {
     await bot.handleUpdate(createPhotoUpdate());
 
     expect(api.getFile).toHaveBeenCalledWith("photo-big");
-    expect(pi.service.prompt).toHaveBeenCalledWith("Check this graph", [
-      {
-        type: "image",
-        data: Buffer.from("image-bytes").toString("base64"),
-        mimeType: "image/jpeg",
-      },
-    ]);
-    expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("🖼️ Check this graph"))).toBe(true);
-    expect(unlink).toHaveBeenCalledTimes(1);
+    expect(writeFile).toHaveBeenCalledWith("/uploads/test-id/1-photo.jpg", expect.any(Buffer));
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("Path: /uploads/test-id/1-photo.jpg"));
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("Telegram type: photo"));
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("Caption:\nCheck this graph"));
+    expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("📎 Saved 1-photo.jpg"))).toBe(true);
   });
 
-  it("handles image documents and ignores non-image documents", async () => {
+  it("saves document uploads and includes caption metadata", async () => {
     const { bot, pi, api } = setupBot();
     api.getFile.mockImplementation(async (fileId: string) => ({
       file_id: fileId,
-      file_path: "docs/diagram.png",
+      file_path: fileId === "document-image-id" ? "docs/diagram.png" : "docs/notes.txt",
     }));
 
     const promptMock = pi.service.prompt as ReturnType<typeof vi.fn>;
@@ -3102,17 +3100,14 @@ describe("createBot", () => {
 
     await bot.handleUpdate(createDocumentUpdate({ message: { caption: undefined } }));
 
-    expect(pi.service.prompt).toHaveBeenCalledWith("Please analyze this image.", [
-      {
-        type: "image",
-        data: Buffer.from("image-bytes").toString("base64"),
-        mimeType: "image/png",
-      },
-    ]);
-    expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("Please analyze this image."))).toBe(true);
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("Path: /uploads/test-id/1-diagram.png"));
+    expect(pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("MIME type: image/png"));
+    expect(api.sendMessage.mock.calls.some((call) => String(call[1]).includes("📎 Saved 1-diagram.png"))).toBe(true);
 
     await bot.handleUpdate(createDocumentUpdate({
       message: {
+        message_id: 2,
+        caption: "Check this file",
         document: {
           file_id: "document-text-id",
           file_unique_id: "document-text-unique",
@@ -3123,11 +3118,13 @@ describe("createBot", () => {
       },
     }));
 
-    expect(api.getFile).not.toHaveBeenCalledWith("document-text-id");
-    expect(pi.service.prompt).toHaveBeenCalledTimes(1);
+    expect(api.getFile).toHaveBeenCalledWith("document-text-id");
+    expect(writeFile).toHaveBeenCalledWith("/uploads/test-id/2-notes.txt", expect.any(Buffer));
+    expect(pi.service.prompt).toHaveBeenNthCalledWith(2, expect.stringContaining("Path: /uploads/test-id/2-notes.txt"));
+    expect(pi.service.prompt).toHaveBeenNthCalledWith(2, expect.stringContaining("Caption:\nCheck this file"));
   });
 
-  it("blocks voice messages while processing and reports transcription failures", async () => {
+  it("blocks attachment messages while processing and reports upload failures", async () => {
     let resolvePrompt!: () => void;
     const busy = setupBot({
       piSessionOverrides: {
@@ -3150,15 +3147,14 @@ describe("createBot", () => {
     resolvePrompt();
     await pending;
 
-    vi.mocked(transcribeAudio).mockRejectedValueOnce(new Error("backend missing"));
+    vi.mocked(writeFile).mockRejectedValueOnce(new Error("disk full"));
     const failure = setupBot();
     await failure.bot.handleUpdate(createVoiceUpdate());
 
-    expect(failure.api.sendMessage.mock.calls.some((call) => String(call[1]).includes("Transcription failed:"))).toBe(
+    expect(failure.api.sendMessage.mock.calls.some((call) => String(call[1]).includes("Upload handling failed:"))).toBe(
       true,
     );
     expect(failure.pi.service.prompt).not.toHaveBeenCalled();
-    expect(unlink).toHaveBeenCalled();
   });
 
   it("auto-creates a session for audio files before prompting", async () => {
@@ -3189,8 +3185,9 @@ describe("createBot", () => {
     );
 
     expect(noSession.api.getFile).toHaveBeenCalledWith("audio-file-id");
-    expect(noSession.pi.service.newSession).toHaveBeenCalledTimes(1);
-    expect(noSession.pi.service.prompt).toHaveBeenCalledWith("transcribed text");
+    expect(noSession.pi.service.newSession).toHaveBeenCalled();
+    expect(noSession.pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("Path: /uploads/test-id/1-clip.ogg"));
+    expect(noSession.pi.service.prompt).toHaveBeenCalledWith(expect.stringContaining("Telegram type: audio"));
   });
 
   it("blocks new messages while processing and auto-creates a session when needed", async () => {

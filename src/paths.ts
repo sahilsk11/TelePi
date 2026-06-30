@@ -4,6 +4,7 @@ import path from "node:path";
 export const DOCKER_WORKSPACE_PATH = "/workspace";
 const DEFAULT_CONFIG_DIRNAME = path.join(".config", "telepi");
 const DEFAULT_CONFIG_FILENAME = "config.env";
+const DEFAULT_UPLOADS_DIRNAME = path.join(".telepi", "uploads");
 
 export function getHomeDirectory(): string {
   return process.env.HOME?.trim() || homedir();
@@ -29,6 +30,10 @@ export function resolvePathFromCwd(filePath: string, cwd: string = process.cwd()
 
 export function getDefaultTelePiConfigPath(homeDirectory: string = getHomeDirectory()): string {
   return path.join(homeDirectory, DEFAULT_CONFIG_DIRNAME, DEFAULT_CONFIG_FILENAME);
+}
+
+export function getDefaultTelePiUploadsDir(homeDirectory: string = getHomeDirectory()): string {
+  return path.join(homeDirectory, DEFAULT_UPLOADS_DIRNAME);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -137,6 +137,8 @@ export async function downloadTelegramFile(
     maxFileSizeBytes?: number;
     fileKind?: string;
     tempFilePrefix?: string;
+    destinationDir?: string;
+    fileName?: string;
   } = {},
 ): Promise<string> {
   const file = await api.getFile(fileId);
@@ -157,6 +159,13 @@ export async function downloadTelegramFile(
   }
 
   const buffer = Buffer.from(await response.arrayBuffer());
+  if (options.destinationDir) {
+    await mkdir(options.destinationDir, { recursive: true });
+    const destinationPath = path.join(options.destinationDir, options.fileName || path.basename(file.file_path));
+    await writeFile(destinationPath, buffer);
+    return destinationPath;
+  }
+
   const extension = path.extname(file.file_path) || ".ogg";
   const tempPrefix = options.tempFilePrefix ?? "telepi-voice";
   const tempPath = path.join(tmpdir(), `${tempPrefix}-${randomUUID()}${extension}`);

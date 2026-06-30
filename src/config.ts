@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   DOCKER_WORKSPACE_PATH,
   getDefaultTelePiConfigPath,
+  getDefaultTelePiUploadsDir,
   resolvePathFromCwd,
 } from "./paths.js";
 
@@ -17,6 +18,7 @@ export interface TelePiConfig {
   piSessionPath?: string;
   piModel?: string;
   toolVerbosity: ToolVerbosity;
+  uploadsDir: string;
   promptInboxDir?: string;
   promptInboxIntervalMs: number;
 }
@@ -46,6 +48,7 @@ export function loadConfig(): TelePiConfig {
   const piSessionPath = optionalString(process.env.PI_SESSION_PATH);
   const piModel = optionalString(process.env.PI_MODEL);
   const toolVerbosity = parseToolVerbosity(optionalString(process.env.TOOL_VERBOSITY));
+  const uploadsDir = resolveOptionalPath(process.env.TELEPI_UPLOADS_DIR) ?? getDefaultTelePiUploadsDir();
   const promptInboxDir = resolveOptionalPath(process.env.TELEPI_PROMPT_INBOX_DIR);
   const promptInboxIntervalMs = parsePromptInboxIntervalMs(optionalString(process.env.TELEPI_PROMPT_INBOX_INTERVAL_MS));
 
@@ -57,6 +60,7 @@ export function loadConfig(): TelePiConfig {
     piSessionPath,
     piModel,
     toolVerbosity,
+    uploadsDir,
     promptInboxDir,
     promptInboxIntervalMs,
   };
