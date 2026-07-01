@@ -1,8 +1,17 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { loadConfig } from "../src/config.js";
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return {
+    ...actual,
+    execFileSync: vi.fn(),
+  };
+});
 
 describe("loadConfig", () => {
   const originalEnv = process.env;
@@ -40,7 +49,11 @@ describe("loadConfig", () => {
     delete process.env.TELEPI_PI_TOOLS;
     delete process.env.TELEPI_PROMPT_INBOX_DIR;
     delete process.env.TELEPI_PROMPT_INBOX_INTERVAL_MS;
+    delete process.env.HOME_ASSISTANT_API_KEY;
+    delete process.env.REQUIRED_FROM_ENV;
+    delete process.env.REQUIRED_FROM_VAULT;
     delete process.env.container;
+    vi.mocked(execFileSync).mockReset();
   });
 
   afterEach(() => {
@@ -166,8 +179,10 @@ describe("loadConfig", () => {
       agentDir: "./agent",
       sessionDir: "./state/sessions",
       workspace: "./workspace",
+      requiredEnv: ["REQUIRED_FROM_ENV"],
       tools: ["read", "bash", "read", "hindsight_recall"],
     }));
+    process.env.REQUIRED_FROM_ENV = "already-set";
     process.env.TELEGRAM_BOT_TOKEN = "bot-token";
     process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
     process.env.PI_AGENT_PROFILE = profilePath;
@@ -180,11 +195,53 @@ describe("loadConfig", () => {
       agentDir: path.join(tempDir, "profiles", "mark2", "agent"),
       sessionDir: path.join(tempDir, "profiles", "mark2", "state", "sessions"),
       workspace: path.join(tempDir, "profiles", "mark2", "workspace"),
+      requiredEnv: ["REQUIRED_FROM_ENV"],
       tools: ["read", "bash", "hindsight_recall"],
     });
     expect(config.workspace).toBe(path.join(tempDir, "profiles", "mark2", "workspace"));
     expect(config.piSessionDir).toBe(path.join(tempDir, "profiles", "mark2", "state", "sessions"));
     expect(config.piTools).toEqual(["read", "bash", "hindsight_recall"]);
+  });
+
+  it("loads missing required profile env values from vault", () => {
+    const profilePath = path.join(tempDir, "profiles", "mark2", "profile.json");
+    writeFile(profilePath, JSON.stringify({
+      requiredEnv: ["REQUIRED_FROM_ENV", "REQUIRED_FROM_VAULT"],
+      tools: ["read"],
+    }));
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.PI_AGENT_PROFILE = profilePath;
+    process.env.REQUIRED_FROM_ENV = "already-set";
+    vi.mocked(execFileSync).mockReturnValue("from-vault\n");
+
+    const config = loadConfig();
+
+    expect(config.piProfile?.requiredEnv).toEqual(["REQUIRED_FROM_ENV", "REQUIRED_FROM_VAULT"]);
+    expect(process.env.REQUIRED_FROM_ENV).toBe("already-set");
+    expect(process.env.REQUIRED_FROM_VAULT).toBe("from-vault");
+    expect(execFileSync).toHaveBeenCalledWith("vault", ["get", "REQUIRED_FROM_VAULT"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  });
+
+  it("throws when a required profile env value is missing from env and vault", () => {
+    const profilePath = path.join(tempDir, "profiles", "mark2", "profile.json");
+    writeFile(profilePath, JSON.stringify({
+      requiredEnv: ["HOME_ASSISTANT_API_KEY"],
+      tools: ["mcp"],
+    }));
+    process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+    process.env.TELEGRAM_ALLOWED_USER_IDS = "123";
+    process.env.PI_AGENT_PROFILE = profilePath;
+    vi.mocked(execFileSync).mockImplementation(() => {
+      throw new Error("missing");
+    });
+
+    expect(() => loadConfig()).toThrow(
+      "Missing required Pi profile environment variable: HOME_ASSISTANT_API_KEY",
+    );
   });
 
   it("lets TelePi-specific env override profile workspace, session dir, agent dir, and tools", () => {

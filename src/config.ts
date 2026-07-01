@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -43,6 +44,7 @@ export interface ResolvedPiAgentProfile {
   agentDir?: string;
   sessionDir?: string;
   workspace?: string;
+  requiredEnv?: string[];
   tools?: string[];
 }
 
@@ -52,6 +54,7 @@ interface PiAgentProfileFile {
   sessionDir?: unknown;
   workspace?: unknown;
   defaultWorkspace?: unknown;
+  requiredEnv?: unknown;
   tools?: unknown;
 }
 
@@ -67,6 +70,7 @@ export function loadConfig(): TelePiConfig {
   const telegramBotToken = requireEnv("TELEGRAM_BOT_TOKEN");
   const telegramAllowedUserIds = parseAllowedUserIds(requireEnv("TELEGRAM_ALLOWED_USER_IDS"));
   const piProfile = resolvePiAgentProfile();
+  loadRequiredProfileEnv(piProfile);
   const workspace = resolveWorkspace(piProfile);
   const piSessionPath = optionalString(process.env.PI_SESSION_PATH);
   const piSessionDir = resolveOptionalPath(process.env.TELEPI_PI_SESSION_DIR)
@@ -260,6 +264,7 @@ function resolvePiAgentProfile(): ResolvedPiAgentProfile | undefined {
   const agentDir = explicitAgentDir ?? manifestAgentDir ?? profileDir;
   const sessionDir = resolveProfilePathValue(profile.sessionDir, profileDir);
   const workspace = resolveProfilePathValue(profile.workspace ?? profile.defaultWorkspace, profileDir);
+  const requiredEnv = Array.isArray(profile.requiredEnv) ? normalizeEnvNames(profile.requiredEnv) : undefined;
   const tools = Array.isArray(profile.tools) ? normalizeToolNames(profile.tools) : undefined;
 
   return {
@@ -268,8 +273,48 @@ function resolvePiAgentProfile(): ResolvedPiAgentProfile | undefined {
     agentDir,
     ...(sessionDir ? { sessionDir } : {}),
     ...(workspace ? { workspace } : {}),
+    ...(requiredEnv ? { requiredEnv } : {}),
     ...(tools ? { tools } : {}),
   };
+}
+
+function loadRequiredProfileEnv(piProfile: ResolvedPiAgentProfile | undefined): void {
+  const requiredEnv = piProfile?.requiredEnv;
+  if (!requiredEnv || requiredEnv.length === 0) {
+    return;
+  }
+
+  const missing: string[] = [];
+  for (const name of requiredEnv) {
+    if (optionalString(process.env[name])) {
+      continue;
+    }
+
+    const value = readVaultSecret(name);
+    if (value) {
+      process.env[name] = value;
+      continue;
+    }
+
+    missing.push(name);
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required Pi profile environment variable${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`
+    );
+  }
+}
+
+function readVaultSecret(name: string): string | undefined {
+  try {
+    return optionalString(execFileSync("vault", ["get", name], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }));
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveSelectedProfilePath(): string | undefined {
@@ -418,6 +463,17 @@ function normalizeToolNames(values: unknown[]): string[] | undefined {
     ),
   ];
   return tools.length > 0 ? tools : undefined;
+}
+
+function normalizeEnvNames(values: unknown[]): string[] | undefined {
+  const names = [
+    ...new Set(
+      values
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value))
+    ),
+  ];
+  return names.length > 0 ? names : undefined;
 }
 
 function resolveTildePath(value: string): string {
