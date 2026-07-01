@@ -482,6 +482,10 @@ describe("PiSessionService", () => {
       expect.objectContaining({
         cwd: "/workspace/base",
         agentDir: "/mock-agent",
+        sessionStartEvent: {
+          type: "session_start",
+          reason: "new",
+        },
       }),
     );
     expect(mockState.SettingsManager.create).toHaveBeenCalledWith("/workspace/base", "/mock-agent");
@@ -509,6 +513,33 @@ describe("PiSessionService", () => {
       modelFallbackMessage: "fallback-model",
       model: "anthropic/claude-sonnet-4-5",
     });
+  });
+
+  it("marks initial startup as resume when opening a configured session path", async () => {
+    await PiSessionService.create(createConfig({ piSessionPath: "/sessions/existing.jsonl" }));
+
+    expect(mockState.SessionManager.open).toHaveBeenCalledWith(
+      "/sessions/existing.jsonl",
+      undefined,
+      "/workspace/base",
+    );
+    expect(mockState.createAgentSessionRuntime).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        sessionStartEvent: {
+          type: "session_start",
+          reason: "resume",
+        },
+      }),
+    );
+    expect(mockState.createAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionStartEvent: {
+          type: "session_start",
+          reason: "resume",
+        },
+      }),
+    );
   });
 
   it("activates coding built-ins after session creation without disabling extension/custom tools on pi 0.70.x", async () => {

@@ -436,10 +436,17 @@ export async function createPiSession(
   overrideWorkspace?: string,
 ): Promise<PiSessionHandle> {
   const workspace = overrideWorkspace ?? config.workspace;
+  const sessionManager = createSessionManager(
+    config,
+    workspace,
+    overrideSessionPath,
+    overrideWorkspace !== undefined,
+  );
   return createPiSessionHandle(
     config,
     workspace,
-    createSessionManager(config, workspace, overrideSessionPath, overrideWorkspace !== undefined),
+    sessionManager,
+    { reason: sessionManager.isPersisted?.() ? "resume" : "new" },
   );
 }
 
