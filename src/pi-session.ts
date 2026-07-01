@@ -474,7 +474,8 @@ async function createPiSessionHandle(
   sessionManager: SessionManager,
   initialSessionStartEvent?: { reason: "new" | "resume" | "fork" },
 ): Promise<PiSessionHandle> {
-  const authStorage = AuthStorage.create();
+  const agentDir = config.piProfile?.agentDir ?? getAgentDir();
+  const authStorage = AuthStorage.create(path.join(agentDir, "auth.json"));
   let getSlashCommands = (): SlashCommandInfo[] => [];
   const createRuntime: CreateAgentSessionRuntimeFactory = async ({
     cwd,
@@ -482,8 +483,8 @@ async function createPiSessionHandle(
     sessionManager: runtimeSessionManager,
     sessionStartEvent,
   }) => {
-    const settingsManager = SettingsManager.create(cwd);
-    const modelRegistry = ModelRegistry.create(authStorage);
+    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const modelRegistry = ModelRegistry.create(authStorage, path.join(agentDir, "models.json"));
     const services = await createAgentSessionServices({
       cwd,
       agentDir,
@@ -535,7 +536,7 @@ async function createPiSessionHandle(
 
   const runtime = await createAgentSessionRuntime(createRuntime, {
     cwd: workspace,
-    agentDir: config.piProfile?.agentDir ?? getAgentDir(),
+    agentDir,
     sessionManager,
     ...(initialSessionStartEvent ? {
       sessionStartEvent: {
