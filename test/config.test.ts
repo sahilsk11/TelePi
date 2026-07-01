@@ -201,6 +201,10 @@ describe("loadConfig", () => {
     expect(config.workspace).toBe(path.join(tempDir, "profiles", "mark2", "workspace"));
     expect(config.piSessionDir).toBe(path.join(tempDir, "profiles", "mark2", "state", "sessions"));
     expect(config.piTools).toEqual(["read", "bash", "hindsight_recall"]);
+    expect(process.env.PI_CODING_AGENT_DIR).toBe(path.join(tempDir, "profiles", "mark2", "agent"));
+    expect(process.env.PI_CODING_AGENT_SESSION_DIR).toBe(
+      path.join(tempDir, "profiles", "mark2", "state", "sessions"),
+    );
   });
 
   it("loads missing required profile env values from vault", () => {
@@ -266,6 +270,8 @@ describe("loadConfig", () => {
     expect(config.workspace).toBe(path.join(cwdDir, "override-workspace"));
     expect(config.piSessionDir).toBe(path.join(cwdDir, "override-sessions"));
     expect(config.piTools).toEqual(["edit", "write"]);
+    expect(process.env.PI_CODING_AGENT_DIR).toBe(path.join(cwdDir, "override-agent"));
+    expect(process.env.PI_CODING_AGENT_SESSION_DIR).toBe(path.join(cwdDir, "override-sessions"));
   });
 
   it.each(["all", "summary", "errors-only", "none"] as const)(

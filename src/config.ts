@@ -70,12 +70,14 @@ export function loadConfig(): TelePiConfig {
   const telegramBotToken = requireEnv("TELEGRAM_BOT_TOKEN");
   const telegramAllowedUserIds = parseAllowedUserIds(requireEnv("TELEGRAM_ALLOWED_USER_IDS"));
   const piProfile = resolvePiAgentProfile();
+  applyResolvedProfileEnv(piProfile);
   loadRequiredProfileEnv(piProfile);
   const workspace = resolveWorkspace(piProfile);
   const piSessionPath = optionalString(process.env.PI_SESSION_PATH);
   const piSessionDir = resolveOptionalPath(process.env.TELEPI_PI_SESSION_DIR)
     ?? resolveOptionalPath(process.env.PI_CODING_AGENT_SESSION_DIR)
     ?? piProfile?.sessionDir;
+  applyResolvedSessionEnv(piSessionDir);
   const piModel = optionalString(process.env.PI_MODEL);
   const piTools = resolvePiTools(piProfile);
   const toolVerbosity = parseToolVerbosity(optionalString(process.env.TOOL_VERBOSITY));
@@ -303,6 +305,18 @@ function loadRequiredProfileEnv(piProfile: ResolvedPiAgentProfile | undefined): 
     throw new Error(
       `Missing required Pi profile environment variable${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`
     );
+  }
+}
+
+function applyResolvedProfileEnv(piProfile: ResolvedPiAgentProfile | undefined): void {
+  if (piProfile?.agentDir && !optionalString(process.env.PI_CODING_AGENT_DIR)) {
+    process.env.PI_CODING_AGENT_DIR = piProfile.agentDir;
+  }
+}
+
+function applyResolvedSessionEnv(sessionDir: string | undefined): void {
+  if (sessionDir && !optionalString(process.env.PI_CODING_AGENT_SESSION_DIR)) {
+    process.env.PI_CODING_AGENT_SESSION_DIR = sessionDir;
   }
 }
 
