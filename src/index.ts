@@ -62,7 +62,7 @@ export async function startBot(): Promise<void> {
   async function startPolling(): Promise<void> {
     try {
       await bot!.start({
-        drop_pending_updates: true,
+        drop_pending_updates: false,
         onStart: () => {
           restartAttempts = 0;
         },
