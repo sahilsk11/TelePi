@@ -471,8 +471,12 @@ describe("PiSessionService", () => {
     const service = await PiSessionService.create(createConfig());
 
     expect(mockState.AuthStorage.create).toHaveBeenCalledTimes(1);
+    expect(mockState.AuthStorage.create).toHaveBeenCalledWith("/mock-agent/auth.json");
     expect(mockState.ModelRegistry.create).toHaveBeenCalledTimes(1);
-    expect(mockState.ModelRegistry.create).toHaveBeenCalledWith(expect.objectContaining({ kind: "auth-storage" }));
+    expect(mockState.ModelRegistry.create).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "auth-storage" }),
+      "/mock-agent/models.json",
+    );
     expect(mockState.createAgentSessionRuntime).toHaveBeenCalledWith(
       expect.any(Function),
       expect.objectContaining({
@@ -480,7 +484,7 @@ describe("PiSessionService", () => {
         agentDir: "/mock-agent",
       }),
     );
-    expect(mockState.SettingsManager.create).toHaveBeenCalledWith("/workspace/base");
+    expect(mockState.SettingsManager.create).toHaveBeenCalledWith("/workspace/base", "/mock-agent");
     expect(mockState.createAgentSessionServices).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: "/workspace/base",
