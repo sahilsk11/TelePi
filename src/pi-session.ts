@@ -128,6 +128,29 @@ interface PiSessionHandle {
   dispose: () => Promise<void>;
 }
 
+function currentSlashCommands(handle: PiSessionHandle, session: AgentSession): SlashCommandInfo[] {
+  const commands = handle.getSlashCommands();
+  const liveExtensionCommands = session.extensionRunner?.getRegisteredCommands?.() ?? [];
+  if (liveExtensionCommands.length === 0) {
+    return commands;
+  }
+
+  const byName = new Map(commands.map((command) => [command.name.replace(/^\/+/, "").trim(), command]));
+  for (const command of liveExtensionCommands) {
+    const name = command.invocationName?.replace(/^\/+/, "").trim() || command.name.replace(/^\/+/, "").trim();
+    if (!name) {
+      continue;
+    }
+    byName.set(name, {
+      name,
+      description: command.description,
+      source: "extension",
+      sourceInfo: command.sourceInfo,
+    });
+  }
+  return [...byName.values()];
+}
+
 /**
  * Patch the bash tool on a live session to enforce a default timeout and guard
  * against TelePi restarting or managing its own launchd service.
@@ -709,7 +732,7 @@ export class PiSessionService {
   }
 
   async listSlashCommands(): Promise<SlashCommandInfo[]> {
-    const commands = this.getHandle().getSlashCommands();
+    const commands = currentSlashCommands(this.getHandle(), this.getSession());
     const deduped = new Map<string, SlashCommandInfo>();
 
     for (const command of commands) {
